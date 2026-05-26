@@ -11,7 +11,7 @@ backbone:
   small_image: true            # 96×96 → 12×12 layer4 spatial (CIFAR-100 32×32에서 4×4 보존)
   zero_init_residual: true
   gradient_checkpoint: true
-  gc_mode: layer3              # layer3에만 ckpt → 메모리/속도 균형 (multi-crop 권장)
+  gc_mode: all                 # multi-crop+R50+batch256은 layer3-only로 부족 → 전체 layer ckpt
 
 data:
   root: ./data
@@ -52,7 +52,7 @@ training:
   batch_size: 256
   amp: true
   amp_dtype: bfloat16          # L4 native bf16, GradScaler 불필요
-  compile: true
+  compile: false               # multi-crop+R50 OOM 방지 → 비활성. 속도 ~10-15% 손실
   compile_mode: default
   channels_last: true
   grad_clip: null

@@ -9,8 +9,11 @@ VICReg 학습 스크립트 (thin wrapper, train_mocov2.py 패턴).
 체크포인트: outputs/vicreg_r50_seed42/
 로그 파일: logs/vicreg_r50_seed42.log
 """
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

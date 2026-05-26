@@ -8,8 +8,13 @@
 
 노트북에서 학습 시작하고, 안정화된 다음 .py로 옮겨 nohup 백그라운드 돌리는 용도.
 """
+import os
 import sys
 from pathlib import Path
+
+# CUDA 메모리 단편화 방지 — multi-crop 학습 시 OOM 줄임.
+# torch import 전에 설정해야 효과 있음.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
