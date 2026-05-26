@@ -29,7 +29,8 @@ class STL10UnlabeledDataset(Dataset):
         """
         Args:
             root: 데이터 저장 경로 (예: "./data")
-            transform: TwoViewTransform 인스턴스. (view1, view2) 튜플 반환.
+            transform: TwoViewTransform 또는 MultiCropTransform 인스턴스.
+                       전자는 (v1, v2) 튜플, 후자는 List[Tensor]를 반환.
             download: 데이터가 없으면 자동 다운로드.
         """
         self.dataset = STL10(
@@ -43,12 +44,12 @@ class STL10UnlabeledDataset(Dataset):
     def __len__(self) -> int:
         return len(self.dataset)
 
-    def __getitem__(self, idx: int) -> Tuple:
+    def __getitem__(self, idx: int):
         # STL10 unlabeled은 (img, -1) 반환 (라벨 없음)
         img, _ = self.dataset[idx]
-        # transform이 (view1, view2) 튜플을 반환하는 TwoViewTransform이어야 함
-        v1, v2 = self.transform(img)
-        return v1, v2
+        # transform output은 TwoView면 tuple, MultiCrop이면 list.
+        # DataLoader의 default_collate는 둘 다 지원 → 그대로 반환.
+        return self.transform(img)
 
 
 def build_stl10_loader(
@@ -71,8 +72,13 @@ def build_stl10_loader(
         DataLoader (shuffle=True, drop_last=True, pin_memory=True).
     """
     if transform is None:
-        from .transforms import build_train_transform
-        transform = build_train_transform(cfg)
+        aug_type = cfg.get("augmentation", {}).get("type", "two_view")
+        if aug_type == "multicrop":
+            from .multicrop_transforms import build_multicrop_transform
+            transform = build_multicrop_transform(cfg)
+        else:
+            from .transforms import build_train_transform
+            transform = build_train_transform(cfg)
     
     dataset = STL10UnlabeledDataset(
         root=cfg["data"]["root"],

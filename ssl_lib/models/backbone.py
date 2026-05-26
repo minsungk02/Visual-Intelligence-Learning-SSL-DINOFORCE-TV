@@ -39,6 +39,7 @@ class ResNetBackbone(nn.Module):
         small_image: bool = True,
         zero_init_residual: bool = True,
         gradient_checkpoint: bool = False,
+        gc_mode: str = "all",
     ):
         """
         Args:
@@ -47,9 +48,11 @@ class ResNetBackbone(nn.Module):
                 CIFAR-100 32×32 LP eval 시 4×4 spatial 보존 (stride=2면 2×2로 줄어듦).
                 ⚠️ evaluate.py가 원본 ResNet 구조를 가정한다면 False로 둬야 함.
             zero_init_residual: ResNet의 마지막 BN을 0으로 초기화 (학습 안정성).
-            gradient_checkpoint: True면 layer1/layer2에 gradient checkpointing 적용.
-                backprop activation 재계산으로 메모리 절약 (~30% 속도 손실).
-                96×96 pretraining 시 OOM 방지용.
+            gradient_checkpoint: True면 일부 layer에 gradient checkpointing 적용.
+                96×96 multi-crop 학습 시 OOM 방지용.
+            gc_mode: "all"    — layer1~layer4 모두 ckpt (메모리 최저, ~30% 속도 손실)
+                    "layer3" — layer3만 ckpt (균형, ~10% 손실) — multi-crop 권장
+                    "off"    — gradient_checkpoint=False와 동일
         """
         super().__init__()
 
@@ -86,27 +89,31 @@ class ResNetBackbone(nn.Module):
 
         self.net = net
         self.use_gc = gradient_checkpoint
+        self.gc_mode = gc_mode if gradient_checkpoint else "off"
         self.small_image = small_image
 
-    def _ckpt(self, layer, x):
-        """gradient checkpointing이 활성화되고 grad가 필요한 경우에만 적용."""
-        if self.use_gc and x.requires_grad:
+    def _ckpt(self, layer, x, layer_name: str):
+        """현재 gc_mode에 따라 해당 layer에만 checkpointing 적용."""
+        if not self.use_gc or not x.requires_grad:
+            return layer(x)
+        if self.gc_mode == "all":
+            return checkpoint(layer, x, use_reentrant=False)
+        if self.gc_mode == "layer3" and layer_name == "layer3":
             return checkpoint(layer, x, use_reentrant=False)
         return layer(x)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.small_image:
-            # small_image 모드: 수동 forward로 전 layer에 checkpointing 적용.
-            # symmetric_loss=True면 encoder_q가 두 번 실행되어 activation이 두 배로 쌓임.
-            # layer3는 6개 bottleneck 블록(ResNet-50)으로 특히 메모리 큼 → 반드시 ckpt 필요.
+            # small_image 모드: 수동 forward로 layer별 checkpointing 제어.
+            # gc_mode="layer3": layer3만 ckpt — 메모리/속도 균형 (multi-crop 권장).
             x = self.net.conv1(x)
             x = self.net.bn1(x)
             x = self.net.relu(x)
             x = self.net.maxpool(x)      # Identity
-            x = self._ckpt(self.net.layer1, x)
-            x = self._ckpt(self.net.layer2, x)
-            x = self._ckpt(self.net.layer3, x)
-            x = self._ckpt(self.net.layer4, x)
+            x = self._ckpt(self.net.layer1, x, "layer1")
+            x = self._ckpt(self.net.layer2, x, "layer2")
+            x = self._ckpt(self.net.layer3, x, "layer3")
+            x = self._ckpt(self.net.layer4, x, "layer4")
             x = self.net.avgpool(x)
             x = torch.flatten(x, 1)
             return x
@@ -128,4 +135,5 @@ def build_backbone(cfg: dict) -> ResNetBackbone:
         small_image=bb_cfg.get("small_image", True),
         zero_init_residual=bb_cfg.get("zero_init_residual", True),
         gradient_checkpoint=bb_cfg.get("gradient_checkpoint", False),
+        gc_mode=bb_cfg.get("gc_mode", "all"),
     )

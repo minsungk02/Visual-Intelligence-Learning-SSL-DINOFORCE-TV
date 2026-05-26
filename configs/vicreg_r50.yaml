@@ -1,0 +1,69 @@
+# ====================================================================
+# VICReg — Variance-Invariance-Covariance Regularization
+# Bardes et al., ICLR 2022. EMA/queue/predictor 없음 → seed-robust.
+# Goal: STL10 LP 78~82%, CIFAR10 LP 78~82% (baseline 2-view)
+# 시간 예산: L4 22GB / 200 epoch / ≈ 50-55h (1 forward이라 MoCo-mc보다 빠름)
+# ====================================================================
+
+method: vicreg
+
+backbone:
+  name: resnet50
+  small_image: true
+  zero_init_residual: true
+  gradient_checkpoint: false   # VICReg는 1 fwd만 → ckpt 불필요
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4
+  persistent_workers: true
+  download: true
+
+augmentation:
+  type: two_view               # baseline 2-view (기존 transforms.py 재사용)
+  crop_scale: [0.2, 1.0]
+  color_jitter: [0.4, 0.4, 0.4, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p: 0.5
+
+optimizer:
+  name: lars                   # VICReg 페이퍼 사용 optimizer
+  lr: 0.2                      # batch=256 기준
+  momentum: 0.9
+  weight_decay: 1.0e-6         # LARS는 wd 작게
+  lars_eta: 0.001
+
+schedule:
+  epochs: 200
+  warmup_epochs: 10
+
+training:
+  batch_size: 256
+  amp: true
+  amp_dtype: bfloat16
+  compile: true
+  compile_mode: default
+  channels_last: true
+  grad_clip: null
+  seed: 42
+  log_every: 50
+  save_every: 5
+  keep_last_n_ckpts: 3
+
+projection:
+  hidden_dim: 8192             # VICReg 페이퍼: 큰 projection
+  output_dim: 8192             # variance/covariance가 잘 작동하려면 D 크게
+  num_layers: 3                # 3-layer MLP
+
+vicreg:
+  sim_coef: 25.0
+  var_coef: 25.0
+  cov_coef: 1.0
+  gamma: 1.0
+
+output:
+  dir: ./outputs/vicreg_r50_seed42
+  log_file: ./logs/vicreg_r50_seed42.log

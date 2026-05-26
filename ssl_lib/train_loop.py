@@ -23,14 +23,31 @@ from .utils.logging import setup_logger
 
 
 def build_model(cfg: dict) -> nn.Module:
-    """Config에 따라 MoCo v2 또는 BYOL 빌드."""
+    """Config method 키에 따라 SSL 모델 빌드."""
     method = cfg["method"].lower()
     if method == "mocov2":
         return MoCoV2(cfg)
     elif method == "byol":
         return BYOL(cfg)
+    elif method == "mocov2_mc":
+        from .models.mocov2_mc import MoCoV2MC
+        return MoCoV2MC(cfg)
+    elif method == "vicreg":
+        from .models.vicreg import VICReg
+        return VICReg(cfg)
     else:
         raise ValueError(f"Unknown method: {method}")
+
+
+def _move_batch_to_device(batch, device, channels_last: bool):
+    """배치(tuple of 2 tensors 또는 list of N tensors)를 device로 이동."""
+    out = []
+    for x in batch:
+        x = x.to(device, non_blocking=True)
+        if channels_last and x.ndim == 4:
+            x = x.contiguous(memory_format=torch.channels_last)
+        out.append(x)
+    return out
 
 
 def train_one_epoch(
@@ -41,64 +58,76 @@ def train_one_epoch(
     epoch: int,
     total_epochs: int,
     device: torch.device,
-    scaler=None,  # torch.amp.GradScaler 또는 None
+    scaler=None,  # torch.amp.GradScaler 또는 None (bf16에선 None)
     log_every: int = 50,
     logger=None,
     is_byol: bool = False,
+    amp_dtype: torch.dtype = torch.float16,
+    channels_last: bool = False,
+    grad_clip=None,
 ) -> dict:
     """
     한 epoch 학습.
-    
+
     Returns:
         epoch 통계 dict (avg_loss, avg_feature_std 등)
     """
     model.train()
-    use_amp = scaler is not None
-    
+    use_amp = (scaler is not None) or (amp_dtype == torch.bfloat16)
+
     n_steps = len(loader)
     loss_sum, std_sum = 0.0, 0.0
     t_epoch = time.time()
-    
-    for step, (v1, v2) in enumerate(loader):
-        v1, v2 = v1.to(device, non_blocking=True), v2.to(device, non_blocking=True)
-        
+    current_lr = lr_scheduler.get_lr()
+
+    for step, batch in enumerate(loader):
+        crops = _move_batch_to_device(batch, device, channels_last)
+
         # BYOL은 epoch-based EMA schedule
         if is_byol:
             global_progress = epoch + step / n_steps
             model.set_ema_tau(global_progress, total_epochs)
-        
+
         optimizer.zero_grad(set_to_none=True)
-        
+
         # Mixed precision forward
-        with torch.amp.autocast(device_type="cuda", enabled=use_amp):
-            loss, log_dict = model(v1, v2)
-        
-        # Backward
-        if use_amp:
+        with torch.amp.autocast(device_type="cuda", enabled=use_amp, dtype=amp_dtype):
+            if len(crops) == 2:
+                loss, log_dict = model(crops[0], crops[1])
+            else:
+                loss, log_dict = model(crops)
+
+        # Backward — bf16 path는 GradScaler 불필요
+        if scaler is not None:
             scaler.scale(loss).backward()
+            if grad_clip is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss.backward()
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
-        
+
         # BYOL: optimizer.step() 후 target encoder EMA 업데이트
         if is_byol:
             model._update_target()
-        
+
         # LR schedule step
         current_lr = lr_scheduler.step()
-        
+
         # Statistics
         loss_sum += log_dict["loss"]
-        std_sum += log_dict["feature_std"]
-        
+        std_sum += log_dict.get("feature_std", 0.0)
+
         if logger is not None and (step + 1) % log_every == 0:
             gpu_mem = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
             logger.info(
                 f"Ep {epoch:3d} | step {step+1:4d}/{n_steps} | "
                 f"loss {log_dict['loss']:.4f} | "
-                f"feat_std {log_dict['feature_std']:.4f} | "
+                f"feat_std {log_dict.get('feature_std', 0.0):.4f} | "
                 f"lr {current_lr:.5f} | "
                 f"gpu_mem {gpu_mem:.2f}GB"
             )
@@ -157,9 +186,24 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
     
     # Model
     model = build_model(cfg).to(device)
+
+    # channels_last memory format (R50 conv 10-15% 가속)
+    channels_last = bool(cfg["training"].get("channels_last", False))
+    if channels_last:
+        model = model.to(memory_format=torch.channels_last)
+        logger.info("channels_last memory format enabled")
+
+    # torch.compile (PyTorch 2.0+)
+    if cfg["training"].get("compile", False):
+        try:
+            model = torch.compile(model, mode=cfg["training"].get("compile_mode", "default"))
+            logger.info("torch.compile enabled")
+        except Exception as e:
+            logger.warning(f"torch.compile failed, continuing without: {e}")
+
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Model: {cfg['method']}, trainable params = {n_params/1e6:.1f}M")
-    
+
     # Optimizer + LR scheduler (step-based)
     optimizer = build_optimizer(model, cfg)
     total_steps = len(loader) * cfg["schedule"]["epochs"]
@@ -170,9 +214,15 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
         warmup_steps=warmup_steps,
         total_steps=total_steps,
     )
-    
-    # AMP scaler — torch 2.x 새 API
-    scaler = torch.amp.GradScaler("cuda") if cfg["training"]["amp"] else None
+
+    # AMP scaler — bf16일 경우 GradScaler 불필요.
+    amp_dtype_name = str(cfg["training"].get("amp_dtype", "float16")).lower()
+    amp_dtype = torch.bfloat16 if amp_dtype_name in ("bf16", "bfloat16") else torch.float16
+    if cfg["training"]["amp"] and amp_dtype == torch.float16:
+        scaler = torch.amp.GradScaler("cuda")
+    else:
+        scaler = None
+    logger.info(f"AMP dtype: {amp_dtype}, scaler: {scaler is not None}")
     
     # Resume
     start_epoch = 0
@@ -188,7 +238,8 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
         logger.info(f"Scheduler restored to step {lr_scheduler.step_count}, lr={correct_lr:.5f}")
     
     is_byol = cfg["method"].lower() == "byol"
-    
+    grad_clip = cfg["training"].get("grad_clip", None)
+
     # Training loop
     for epoch in range(start_epoch, cfg["schedule"]["epochs"]):
         stats = train_one_epoch(
@@ -203,6 +254,9 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
             log_every=cfg["training"]["log_every"],
             logger=logger,
             is_byol=is_byol,
+            amp_dtype=amp_dtype,
+            channels_last=channels_last,
+            grad_clip=grad_clip,
         )
         
         # Checkpoint

@@ -14,34 +14,57 @@ import torch.nn as nn
 
 def build_optimizer(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
     """
-    Config dict로부터 SGD optimizer 빌드.
-    
-    BYOL의 경우 cfg["optimizer"]["predictor_lr_mult"]가 있으면
+    Config dict로부터 optimizer 빌드. SGD 또는 LARS 지원.
+
+    - SGD: 기존 baseline (MoCo v2, BYOL).
+    - LARS: VICReg, MoCo-mc, Barlow Twins 등에서 권장.
+            bias/BN parameter는 layer adaptation에서 제외 + wd=0.
+
+    BYOL/MoCo의 경우 cfg["optimizer"]["predictor_lr_mult"]가 있으면
     predictor parameter group을 분리해서 다른 LR 적용.
     """
     opt_cfg = cfg["optimizer"]
+    name = opt_cfg.get("name", "sgd").lower()
     base_lr = opt_cfg["lr"]
     momentum = opt_cfg["momentum"]
     weight_decay = opt_cfg["weight_decay"]
-    
+
     predictor_lr_mult = opt_cfg.get("predictor_lr_mult", None)
-    
+
+    if name == "lars":
+        from .lars import LARS, split_params_for_lars
+        groups = split_params_for_lars(
+            model,
+            weight_decay=weight_decay,
+            predictor_lr_mult=predictor_lr_mult if predictor_lr_mult else 1.0,
+        )
+        # 각 group에 base_lr 적용 (predictor group은 lr_mult로 스케일)
+        for g in groups:
+            g["lr"] = base_lr * g.pop("lr_mult", 1.0)
+        optimizer = LARS(
+            groups,
+            lr=base_lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            eta=opt_cfg.get("lars_eta", 0.001),
+        )
+        return optimizer
+
+    # SGD path
     if predictor_lr_mult is None or not hasattr(model, "predictor"):
-        # 일반 케이스 (MoCo v2, BYOL without separate predictor LR)
         params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.SGD(
             params, lr=base_lr, momentum=momentum, weight_decay=weight_decay
         )
     else:
-        # BYOL: predictor LR 분리
         predictor_params = list(model.predictor.parameters())
         predictor_param_ids = {id(p) for p in predictor_params}
-        
+
         other_params = [
             p for p in model.parameters()
             if p.requires_grad and id(p) not in predictor_param_ids
         ]
-        
+
         optimizer = torch.optim.SGD(
             [
                 {"params": other_params, "lr": base_lr},
@@ -50,7 +73,7 @@ def build_optimizer(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
             momentum=momentum,
             weight_decay=weight_decay,
         )
-    
+
     return optimizer
 
 
