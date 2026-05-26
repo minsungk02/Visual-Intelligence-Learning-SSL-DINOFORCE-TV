@@ -122,16 +122,14 @@ class MoCoV2MC(nn.Module):
         # Momentum update
         self._momentum_update()
 
-        # ── Batch-concat forward ──
-        # 같은 해상도의 crop들을 batch dim으로 합쳐서 1번 forward → chunk로 분리.
-        # 8회 → 3회 forward로 줄어 Python/커널 오버헤드 감소 + GPU 활용률 ↑.
+        # ── 절충 batch-concat forward ──
+        # Globals(96×96)를 concat하면 단일 conv 텐서가 2.4GB → backward에서 OOM.
+        # 그래서 globals는 per-crop forward, locals(32×32, 작음)만 concat.
 
-        # Globals (2B, 3, 96, 96)
-        global_batch = torch.cat(global_crops, dim=0)
-        q_global_all = F.normalize(self.encoder_q(global_batch), dim=1)
-        q_globals = list(q_global_all.chunk(n_g, dim=0))
+        # Globals: per-crop forward (메모리 안전)
+        q_globals = [F.normalize(self.encoder_q(g), dim=1) for g in global_crops]
 
-        # Locals (4B, 3, 32, 32) — 있을 때만
+        # Locals: (n_l * B, 3, 32, 32) 한 번에 처리 — 32×32라 batch 커도 안전
         if n_l > 0:
             local_batch = torch.cat(local_crops, dim=0)
             q_local_all = F.normalize(self.encoder_q(local_batch), dim=1)
@@ -139,10 +137,9 @@ class MoCoV2MC(nn.Module):
         else:
             q_locals = []
 
-        # Key encoder — global_batch 재사용, no grad
+        # Key encoder — globals per-crop (no grad)
         with torch.no_grad():
-            k_global_all = F.normalize(self.encoder_k(global_batch), dim=1)
-            k_globals = list(k_global_all.chunk(n_g, dim=0))
+            k_globals = [F.normalize(self.encoder_k(g), dim=1) for g in global_crops]
 
         # Queue snapshot — backward graph 안전성
         queue_snapshot = self.queue.detach().clone()

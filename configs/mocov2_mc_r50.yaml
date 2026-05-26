@@ -54,7 +54,7 @@ training:
   amp_dtype: bfloat16          # L4 native bf16, GradScaler 불필요
   compile: false               # multi-crop+R50 OOM 방지 → 비활성. 속도 ~10-15% 손실
   compile_mode: default
-  channels_last: true
+  channels_last: false         # 메모리 단편화 의심 → 비활성. 속도 ~10% 손실
   grad_clip: null
   seed: 42
   log_every: 50
