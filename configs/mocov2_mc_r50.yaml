@@ -11,7 +11,7 @@ backbone:
   small_image: true            # 96×96 → 12×12 layer4 spatial (CIFAR-100 32×32에서 4×4 보존)
   zero_init_residual: true
   gradient_checkpoint: true
-  gc_mode: all                 # multi-crop+R50+batch256은 layer3-only로 부족 → 전체 layer ckpt
+  gc_mode: layer3              # batch-concat forward로 메모리 여유 확보 → layer3만 ckpt
 
 data:
   root: ./data

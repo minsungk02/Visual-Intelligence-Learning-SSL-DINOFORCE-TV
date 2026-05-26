@@ -142,8 +142,22 @@ class VICReg(nn.Module):
                 f"VICReg.forward: expected (v1, v2) or ([crops]); got {len(args)} args"
             )
 
-        # 모든 crop을 인코딩 (서로 다른 해상도가 섞일 수 있으니 개별 forward)
-        zs = [self._encode(c) for c in crops]
+        # ── Batch-concat forward (해상도별 grouping) ──
+        # 같은 해상도의 crop들을 batch concat해서 1번 forward.
+        # 2-view 모드면 group 1개 (96×96 × 2장) → 2 forward → 1 forward.
+        # multi-crop 모드면 group 2개 (global 96, local 32) → 6 forward → 2 forward.
+        from collections import defaultdict
+        groups = defaultdict(list)  # (H, W) -> [(orig_idx, tensor), ...]
+        for i, c in enumerate(crops):
+            groups[(c.shape[-2], c.shape[-1])].append((i, c))
+
+        zs = [None] * len(crops)
+        for items in groups.values():
+            idxs = [i for i, _ in items]
+            batch = torch.cat([t for _, t in items], dim=0)
+            z_batch = self._encode(batch)
+            for idx, z in zip(idxs, z_batch.chunk(len(items), dim=0)):
+                zs[idx] = z
 
         # Pair-wise VICReg loss — 모든 (i<j) 조합 평균
         n = len(zs)
