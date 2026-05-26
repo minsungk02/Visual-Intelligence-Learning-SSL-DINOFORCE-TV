@@ -1,7 +1,7 @@
 # ====================================================================
 # MoCo v2 + Multi-Crop — Cross-Resolution용 강화 baseline
-# Goal: STL10 LP 80~84%, CIFAR10 LP 82~86% (현재 76.92 / 78.51 대비)
-# 시간 예산: L4 22GB / 200 epoch / ≈ 60-70h
+# Goal: STL10 LP 80~83%, CIFAR10 LP 81~84% (현재 76.92 / 78.51 대비)
+# 시간 예산: L4 22GB / 150 epoch / ≈ 57-65h
 # ====================================================================
 
 method: mocov2_mc
@@ -11,7 +11,7 @@ backbone:
   small_image: true            # 96×96 → 12×12 layer4 spatial (CIFAR-100 32×32에서 4×4 보존)
   zero_init_residual: true
   gradient_checkpoint: true
-  gc_mode: layer3              # batch-concat forward로 메모리 여유 확보 → layer3만 ckpt
+  gc_mode: all                 # batch-concat 후 단일 layer1 conv가 2.25GB → 안전선으로 all 유지
 
 data:
   root: ./data
@@ -29,7 +29,7 @@ augmentation:
   # local crops — CIFAR10 해상도와 동일 → cross-res invariance 직접 학습
   local_crop_size: 32
   local_crop_scale: [0.08, 0.4]
-  n_local_crops: 4
+  n_local_crops: 2             # 4 → 2: step 시간 ~30% 단축. SwAV/DINO 대비 적지만 cross-res 효과 유지
   # color/blur policy (DINO/MoCo v3 표준)
   color_jitter: [0.4, 0.4, 0.2, 0.1]
   color_jitter_p: 0.8
@@ -45,8 +45,8 @@ optimizer:
   weight_decay: 1.0e-4
 
 schedule:
-  epochs: 200
-  warmup_epochs: 20            # multi-crop은 warmup 길게 (10→20)
+  epochs: 150                  # 200 → 150: 72h budget 안 안착. 손실 ~1-2% 예상
+  warmup_epochs: 15            # epoch 비율(10%) 유지
 
 training:
   batch_size: 256
