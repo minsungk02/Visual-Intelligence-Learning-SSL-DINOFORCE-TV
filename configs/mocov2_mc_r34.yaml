@@ -1,0 +1,75 @@
+# ====================================================================
+# MoCo v2 + Multi-Crop + ResNet-34 — 중간 capacity CNN backbone
+# Goal: STL10 LP 78-82, CIFAR10 LP 81-85 (R18 capacity ↑ + cross-res 유지)
+# 시간 예산: L4 22GB / 200 epoch / ≈ 40-47h
+#
+# R18 sanity가 step 1.2s로 충분히 빨라서 R34로 capacity 키움.
+# R34는 R18 대비 ~1.75x 연산, 같은 batch 256 안전선.
+# ====================================================================
+
+method: mocov2_mc
+
+backbone:
+  name: resnet34                # R18 11M → R34 22M (2x params), R50 25M보다 살짝 작음
+  small_image: true
+  zero_init_residual: true
+  gradient_checkpoint: false    # R34도 메모리 가벼움 (batch 256에서)
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4
+  persistent_workers: true
+  download: true
+
+augmentation:
+  type: multicrop               # cross-res lever 유지
+  global_crop_size: 96
+  global_crop_scale: [0.4, 1.0]
+  local_crop_size: 32
+  local_crop_scale: [0.08, 0.4]
+  n_local_crops: 2
+  color_jitter: [0.4, 0.4, 0.2, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p_global: [1.0, 0.1]
+  gaussian_blur_p_local: 0.5
+  solarize_p_global2: 0.2
+
+optimizer:
+  name: sgd
+  lr: 0.03                      # batch=256 표준 base
+  momentum: 0.9
+  weight_decay: 1.0e-4
+
+schedule:
+  epochs: 200
+  warmup_epochs: 20
+
+training:
+  batch_size: 256               # 안전선. R34 + batch 384는 메모리 빡빡 가능 → 보수적으로 256
+  amp: true
+  amp_dtype: bfloat16
+  compile: false
+  channels_last: true
+  grad_clip: null
+  seed: 42
+  log_every: 50
+  save_every: 5
+  keep_last_n_ckpts: 3
+
+projection:
+  hidden_dim: 2048
+  output_dim: 128
+  num_layers: 2
+
+mocov2:
+  queue_size: 16384             # batch 256 표준 (16384 % 256 = 0)
+  momentum: 0.999
+  temperature: 0.15
+  symmetric_loss: true
+
+output:
+  dir: ./outputs/mocov2_mc_r34_seed42
+  log_file: ./logs/mocov2_mc_r34_seed42.log
