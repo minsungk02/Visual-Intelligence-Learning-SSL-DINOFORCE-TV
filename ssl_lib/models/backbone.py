@@ -120,16 +120,32 @@ class ResNetBackbone(nn.Module):
         return self.net(x)
 
 
-def build_backbone(cfg: dict) -> ResNetBackbone:
+def build_backbone(cfg: dict) -> nn.Module:
     """
-    Config dict로부터 backbone 빌드.
+    Config dict로부터 backbone 빌드. ResNet 계열 + Swin Transformer 지원.
 
     필수 cfg keys:
-        cfg["backbone"]["name"]                 : "resnet18"|"resnet34"|"resnet50"
-        cfg["backbone"]["small_image"]          : bool
-        cfg["backbone"]["gradient_checkpoint"]  : bool (optional, default False)
+        cfg["backbone"]["name"]:
+            "resnet18" | "resnet34" | "resnet50"  → ResNetBackbone
+            "swin_*"  (예: swin_tiny)             → SwinBackbone (timm 사용)
+        cfg["backbone"]["small_image"]          : bool (ResNet 전용)
+        cfg["backbone"]["gradient_checkpoint"]  : bool (ResNet 전용, optional)
+        cfg["backbone"]["timm_name"]            : timm 모델명 (Swin 전용, optional)
+        cfg["backbone"]["img_size"]             : int (Swin 전용, default 96)
+        cfg["backbone"]["window_size"]          : int (Swin 전용, default 3)
     """
     bb_cfg = cfg["backbone"]
+    name = bb_cfg["name"].lower()
+
+    if name.startswith("swin") or name.startswith("vit"):
+        from .swin_backbone import SwinBackbone
+        return SwinBackbone(
+            name=bb_cfg.get("timm_name", "swin_tiny_patch4_window7_224"),
+            img_size=bb_cfg.get("img_size", 96),
+            window_size=bb_cfg.get("window_size", 3),
+        )
+
+    # ResNet 경로
     return ResNetBackbone(
         name=bb_cfg["name"],
         small_image=bb_cfg.get("small_image", True),

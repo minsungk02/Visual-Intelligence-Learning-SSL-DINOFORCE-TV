@@ -1,0 +1,72 @@
+# ====================================================================
+# MoCo v2 + Multi-Crop + ResNet-18 — 가벼운 CNN backbone 실험
+# Goal: STL10 LP 76-80, CIFAR10 LP 80-84 (cross-res lever + smaller backbone)
+# 시간 예산: L4 22GB / 200 epoch / ≈ 54h
+# ====================================================================
+
+method: mocov2_mc
+
+backbone:
+  name: resnet18                # R50 25M → R18 11M, ~3× 빠름
+  small_image: true             # 32x32 입력 시 spatial 보존
+  zero_init_residual: true
+  gradient_checkpoint: false    # R18 메모리 가벼움, 불필요
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4
+  persistent_workers: true
+  download: true
+
+augmentation:
+  type: multicrop               # cross-res lever 유지
+  global_crop_size: 96
+  global_crop_scale: [0.4, 1.0]
+  local_crop_size: 32
+  local_crop_scale: [0.08, 0.4]
+  n_local_crops: 2
+  color_jitter: [0.4, 0.4, 0.2, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p_global: [1.0, 0.1]
+  gaussian_blur_p_local: 0.5
+  solarize_p_global2: 0.2
+
+optimizer:
+  name: sgd
+  lr: 0.045                     # linear scaling: 0.03 × (384/256)
+  momentum: 0.9
+  weight_decay: 1.0e-4
+
+schedule:
+  epochs: 200                   # R18 빠르니 200으로 회복
+  warmup_epochs: 20
+
+training:
+  batch_size: 384               # R18 메모리 여유로 +50%, InfoNCE negatives ↑
+  amp: true
+  amp_dtype: bfloat16
+  compile: false                # 안전 우선
+  channels_last: true           # R18 메모리 여유, +10-15% 가속
+  grad_clip: null
+  seed: 42
+  log_every: 50
+  save_every: 5
+  keep_last_n_ckpts: 3
+
+projection:
+  hidden_dim: 2048
+  output_dim: 128
+  num_layers: 2
+
+mocov2:
+  queue_size: 24576             # 16384 × 1.5, batch 384 배수 (24576 % 384 = 0)
+  momentum: 0.999
+  temperature: 0.15
+  symmetric_loss: true
+
+output:
+  dir: ./outputs/mocov2_mc_r18_seed42
+  log_file: ./logs/mocov2_mc_r18_seed42.log

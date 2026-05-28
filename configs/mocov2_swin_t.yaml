@@ -1,0 +1,70 @@
+# ====================================================================
+# MoCo v2 + Swin-Tiny (2-view) — Transformer backbone 실험
+# Goal: STL10/CIFAR10 LP에서 ViT 라인의 성능 확인
+# 시간 예산: L4 22GB / 200 epoch / ≈ 55-65h
+#
+# Swin은 window attention이 모든 stage spatial 나눠야 함.
+# 96/4=24 → 24/3=8, 12/3=4, 6/3=2, 3/3=1 (모든 stage 호환) → window_size=3
+# Multi-crop은 patch grid 호환 어려워 보류, 2-view로 시작.
+# ====================================================================
+
+method: mocov2                  # baseline MoCoV2 클래스 (2-view)
+
+backbone:
+  name: swin_tiny               # build_backbone dispatch용
+  timm_name: swin_tiny_patch4_window7_224
+  img_size: 96
+  window_size: 3
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4
+  persistent_workers: true
+  download: true
+
+augmentation:
+  type: two_view
+  crop_scale: [0.2, 1.0]
+  color_jitter: [0.4, 0.4, 0.4, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p: 0.5
+
+optimizer:
+  name: sgd                     # AdamW가 ViT 권장이나 framework 일관성 우선
+  lr: 0.03
+  momentum: 0.9
+  weight_decay: 1.0e-4
+
+schedule:
+  epochs: 200
+  warmup_epochs: 20             # Transformer는 warmup 길게
+
+training:
+  batch_size: 256
+  amp: true
+  amp_dtype: bfloat16
+  compile: false
+  channels_last: false          # Transformer엔 효과 작음
+  grad_clip: 1.0                # Transformer 안정성 위해 활성
+  seed: 42
+  log_every: 50
+  save_every: 5
+  keep_last_n_ckpts: 3
+
+projection:
+  hidden_dim: 2048
+  output_dim: 128
+  num_layers: 2
+
+mocov2:
+  queue_size: 16384
+  momentum: 0.999
+  temperature: 0.2              # 2-view 표준
+  symmetric_loss: true
+
+output:
+  dir: ./outputs/mocov2_swin_t_seed42
+  log_file: ./logs/mocov2_swin_t_seed42.log
