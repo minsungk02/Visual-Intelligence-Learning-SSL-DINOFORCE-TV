@@ -15,12 +15,12 @@
 
 ## 실험 결과
 
-| # | Method        | Backbone   | Epochs | Aug          | Optim | STL10 LP | CIFAR10 LP | 시간 (h) | Commit | 비고 |
-|---|---------------|------------|--------|--------------|-------|----------|------------|---------|--------|------|
-| 1 | MoCo v2       | R50 small  | 200    | 2-view       | SGD   |  76.92   |  78.51     | ~60     | -      | baseline (기존) |
-| 2 | BYOL          | R50 small  | 400    | 2-view       | SGD   |  61.60   |  65.52     | ~121    | -      | 시간 초과 + 점수 약함 → **폐기** |
-| 3 | MoCo v2-mc    | R50 small  | 200    | 2g96+4l32    | SGD   |   ?      |    ?       | ?       | -      | multi-crop, bf16, compile |
-| 4 | VICReg        | R50 small  | 200    | 2-view       | LARS  |   ?      |    ?       | ?       | -      | EMA 없음, seed-robust |
+| # | Method        | Backbone     | Epochs | Aug          | Optim | STL10 LP | CIFAR10 LP | 시간 (h) | Commit | 비고 |
+|---|---------------|--------------|--------|--------------|-------|----------|------------|---------|--------|------|
+| 1 | MoCo v2       | R50 small    | 200    | 2-view       | SGD   |  76.92   |  78.51     | ~60     | -      | baseline (기존) |
+| 2 | MoCo v3       | ViT-S/16 @96 | 300    | 2-view       | AdamW |   ?      |    ?       | ?       | -      | **main** (이전 BYOL 폐기 후 전환) |
+| 3 | MoCo v2-mc    | R50 small    | 200    | 2g96+4l32    | SGD   |   ?      |    ?       | ?       | -      | multi-crop, bf16, compile |
+| 4 | VICReg        | R50 small    | 200    | 2-view       | LARS  |   ?      |    ?       | ?       | -      | EMA 없음, seed-robust |
 | 5 | (stretch) VICReg-mc | R50 small | 150 | 2g96+4l32  | LARS  |   ?      |    ?       | ?       | -      | 시간 여유 시 |
 
 (`?`는 학습 후 채워 넣을 것)

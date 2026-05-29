@@ -12,7 +12,7 @@ torchvision의 ResNet을 wrap해서 SSL용으로 만든다.
   stride=1, no maxpool | STL10 96×96 → 12×12 | CIFAR-100 32×32 → 4×4  ✓
   stride=2, no maxpool | STL10 96×96 →  6×6  | CIFAR-100 32×32 → 2×2  △
 
-MoCo v2와 BYOL이 모두 같은 backbone 클래스를 import해서 공정 비교.
+모든 SSL 방법론(MoCo v2/v3 등)이 동일한 backbone 클래스를 import해서 공정 비교.
 """
 from typing import Literal
 
@@ -137,7 +137,16 @@ def build_backbone(cfg: dict) -> nn.Module:
     bb_cfg = cfg["backbone"]
     name = bb_cfg["name"].lower()
 
-    if name.startswith("swin") or name.startswith("vit"):
+    if name.startswith("vit"):
+        from .vit_backbone import ViTBackbone
+        return ViTBackbone(
+            name=bb_cfg.get("timm_name", "vit_small_patch16_224"),
+            img_size=bb_cfg.get("img_size", 96),
+            global_pool=bb_cfg.get("global_pool", "token"),
+            freeze_patch_embed=bb_cfg.get("freeze_patch_embed", True),
+        )
+
+    if name.startswith("swin"):
         from .swin_backbone import SwinBackbone
         return SwinBackbone(
             name=bb_cfg.get("timm_name", "swin_tiny_patch4_window7_224"),

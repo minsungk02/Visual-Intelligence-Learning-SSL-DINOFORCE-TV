@@ -1,20 +1,21 @@
 """
-BYOL 학습 스크립트 (GPU 1 전용).
+MoCo v3 (ViT-S/16) 학습 스크립트 (GPU 0 전용).
 
 프로젝트 루트에서 실행:
-    CUDA_VISIBLE_DEVICES=1 python scripts/train_byol.py
-    CUDA_VISIBLE_DEVICES=1 python scripts/train_byol.py --epochs 5    # sanity check
-    CUDA_VISIBLE_DEVICES=1 python scripts/train_byol.py --resume outputs/byol_r50_seed42/ckpt_ep200.pth
+    CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py
+    CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py --epochs 3     # sanity check
+    CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py --resume outputs/mocov3_vits_seed42/ckpt_ep200.pth
 
-백그라운드 실행 (nohup):
-    bash scripts/run_byol.sh
+Colab(L4) 실행:
+    notebooks/colab_train_mocov3.ipynb
 
-예상 소요 시간: 400 epoch ≈ 20~24시간
-로그 파일: logs/byol_seed42.log
-체크포인트: outputs/byol_r50_seed42/
+config: configs/mocov3_vits.yaml
+체크포인트: outputs/mocov3_vits_seed42/
+로그: logs/mocov3_vits_seed42.log
 
-모니터링: logs에서 feature_std 확인.
-    0.05 미만으로 떨어지면 representation collapse 신호.
+★ 첫 실행 시 1 epoch 소요시간을 확인하고 72h 예산 역산:
+    예) 1 epoch = T초 → 300 epoch = 300·T/3600 시간.
+    72h 초과 시 --epochs 200 (warmup도 config에서 27로) 으로 조정.
 """
 import sys
 from pathlib import Path
@@ -30,13 +31,14 @@ from ssl_lib.train_loop import pretrain
 
 
 def main():
-    parser = argparse.ArgumentParser(description='BYOL pretraining on STL10')
+    parser = argparse.ArgumentParser(description='MoCo v3 (ViT-S) pretraining on STL10')
     parser.add_argument('--resume', type=str, default=None,
                         help='Resume할 checkpoint 경로')
     parser.add_argument('--epochs', type=int, default=None,
                         help='학습 epoch 수 override (미지정 시 config 값 사용)')
     parser.add_argument('--batch-size', type=int, default=None,
-                        help='Batch size override (OOM 시 256으로 줄임)')
+                        help='Batch size override (OOM 시 512로 줄임). '
+                             '※ 바꾸면 lr도 1.5e-4×batch/256으로 재계산 필요.')
     parser.add_argument('--num-workers', type=int, default=None,
                         help='DataLoader worker 수 override (Colab 등에서 2 권장)')
     parser.add_argument('--save-every', type=int, default=None,
@@ -47,7 +49,7 @@ def main():
     print(f'GPU: {torch.cuda.get_device_name(0)}')
     print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
 
-    with open('configs/byol_r50.yaml') as f:
+    with open('configs/mocov3_vits.yaml') as f:
         cfg = yaml.safe_load(f)
 
     if args.epochs is not None:

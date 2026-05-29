@@ -2,7 +2,10 @@
 Optimizer 빌더 + Cosine LR scheduler.
 
 설계:
-- BYOL은 predictor에 더 큰 LR을 주는 게 표준 (predictor_lr_mult).
+- MoCo v2: SGD + momentum.
+- MoCo v3 (ViT): AdamW (bias/norm/pos_embed/cls는 weight_decay 제외).
+- VICReg / MoCo-mc / Barlow Twins: LARS.
+- predictor_lr_mult가 있으면 predictor group을 분리해서 다른 LR 적용.
 - LR scheduler는 step-wise cosine + warmup.
 """
 import math
@@ -14,22 +17,46 @@ import torch.nn as nn
 
 def build_optimizer(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
     """
-    Config dict로부터 optimizer 빌드. SGD 또는 LARS 지원.
+    Config dict로부터 optimizer 빌드. SGD / LARS / AdamW 지원.
 
-    - SGD: 기존 baseline (MoCo v2, BYOL).
-    - LARS: VICReg, MoCo-mc, Barlow Twins 등에서 권장.
-            bias/BN parameter는 layer adaptation에서 제외 + wd=0.
+    - SGD:   기존 baseline (MoCo v2).
+    - LARS:  VICReg, MoCo-mc, Barlow Twins 등에서 권장.
+             bias/BN parameter는 layer adaptation에서 제외 + wd=0.
+    - AdamW: MoCo v3 ViT 표준. bias/norm/pos_embed/cls는 wd 제외.
 
-    BYOL/MoCo의 경우 cfg["optimizer"]["predictor_lr_mult"]가 있으면
+    cfg["optimizer"]["predictor_lr_mult"]가 있으면
     predictor parameter group을 분리해서 다른 LR 적용.
     """
     opt_cfg = cfg["optimizer"]
     name = opt_cfg.get("name", "sgd").lower()
     base_lr = opt_cfg["lr"]
-    momentum = opt_cfg["momentum"]
+    momentum = opt_cfg.get("momentum", 0.9)
     weight_decay = opt_cfg["weight_decay"]
 
     predictor_lr_mult = opt_cfg.get("predictor_lr_mult", None)
+
+    if name == "adamw":
+        # MoCo v3 ViT 표준 optimizer.
+        # ndim<=1(bias, LayerNorm/BN) + pos_embed/cls_token은 weight decay 제외.
+        # 동결된 patch_embed 등 requires_grad=False 파라미터는 자동 제외.
+        decay, no_decay = [], []
+        for pname, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if p.ndim <= 1 or "pos_embed" in pname or "cls_token" in pname:
+                no_decay.append(p)
+            else:
+                decay.append(p)
+        betas = tuple(opt_cfg.get("betas", (0.9, 0.999)))
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay, "weight_decay": weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            lr=base_lr,
+            betas=betas,
+        )
+        return optimizer
 
     if name == "lars":
         from .lars import LARS, split_params_for_lars
@@ -82,7 +109,7 @@ class CosineLRScheduler:
     Cosine LR schedule with linear warmup.
     
     매 step마다 호출. epoch 기반이 아니라 step 기반.
-    BYOL의 predictor LR mult를 유지하면서 base LR만 스케줄링.
+    predictor_lr_mult가 적용된 param group의 비율을 유지하면서 base LR만 스케줄링.
     """
     
     def __init__(

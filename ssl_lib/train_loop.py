@@ -14,7 +14,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from .models.mocov2 import MoCoV2
-from .models.byol import BYOL
 from .data.stl10_unlabeled import build_stl10_loader
 from .utils.seed import set_seed
 from .utils.schedulers import build_optimizer, CosineLRScheduler
@@ -27,8 +26,9 @@ def build_model(cfg: dict) -> nn.Module:
     method = cfg["method"].lower()
     if method == "mocov2":
         return MoCoV2(cfg)
-    elif method == "byol":
-        return BYOL(cfg)
+    elif method == "mocov3":
+        from .models.mocov3 import MoCoV3
+        return MoCoV3(cfg)
     elif method == "mocov2_mc":
         from .models.mocov2_mc import MoCoV2MC
         return MoCoV2MC(cfg)
@@ -61,7 +61,7 @@ def train_one_epoch(
     scaler=None,  # torch.amp.GradScaler 또는 None (bf16에선 None)
     log_every: int = 50,
     logger=None,
-    is_byol: bool = False,
+    momentum_ema: bool = False,
     amp_dtype: torch.dtype = torch.float16,
     channels_last: bool = False,
     grad_clip=None,
@@ -83,8 +83,8 @@ def train_one_epoch(
     for step, batch in enumerate(loader):
         crops = _move_batch_to_device(batch, device, channels_last)
 
-        # BYOL은 epoch-based EMA schedule
-        if is_byol:
+        # MoCo v3 등 momentum encoder 모델은 epoch-based EMA(momentum) schedule
+        if momentum_ema:
             global_progress = epoch + step / n_steps
             model.set_ema_tau(global_progress, total_epochs)
 
@@ -111,8 +111,8 @@ def train_one_epoch(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
 
-        # BYOL: optimizer.step() 후 target encoder EMA 업데이트
-        if is_byol:
+        # MoCo v3: optimizer.step() 후 momentum encoder EMA 업데이트
+        if momentum_ema:
             model._update_target()
 
         # LR schedule step
@@ -237,7 +237,7 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
         logger.info(f"Resumed from {resume_from}, starting at epoch {start_epoch}")
         logger.info(f"Scheduler restored to step {lr_scheduler.step_count}, lr={correct_lr:.5f}")
     
-    is_byol = cfg["method"].lower() == "byol"
+    momentum_ema = cfg["method"].lower() == "mocov3"
     grad_clip = cfg["training"].get("grad_clip", None)
 
     # Training loop
@@ -253,7 +253,7 @@ def pretrain(cfg: dict, resume_from: Optional[str] = None) -> None:
             scaler=scaler,
             log_every=cfg["training"]["log_every"],
             logger=logger,
-            is_byol=is_byol,
+            momentum_ema=momentum_ema,
             amp_dtype=amp_dtype,
             channels_last=channels_last,
             grad_clip=grad_clip,

@@ -29,7 +29,7 @@ def save_checkpoint(
         - backbone_ep{epoch}.pth      : backbone state_dict만 (LP 평가용)
     
     Args:
-        model: SSL 모델 (MoCoV2 또는 BYOL). model.backbone 속성이 있어야 함.
+        model: SSL 모델 (MoCoV2 / MoCoV3 등). model.backbone 속성이 있어야 함.
         optimizer: optimizer (resume용). None이면 skip.
         epoch: 현재 epoch.
         output_dir: 저장 경로.

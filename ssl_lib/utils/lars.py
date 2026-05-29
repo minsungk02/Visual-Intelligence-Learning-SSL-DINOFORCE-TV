@@ -123,8 +123,8 @@ def split_params_for_lars(model, weight_decay: float, predictor_lr_mult: float =
 
     - Bias / BatchNorm / LayerNorm parameter는 'exclude_from_layer_adapt=True' + wd=0
     - 일반 conv/linear weight는 LARS 적용 + wd 활성
-    - model.predictor가 있고 predictor_lr_mult != 1이면 predictor group을 분리 (BYOL용).
-      VICReg/MoCo-mc에는 predictor 없음 → 자동 무시.
+    - model.predictor가 있고 predictor_lr_mult != 1이면 predictor group을 분리
+      (MoCo v3 / SimSiam 등). VICReg/MoCo-mc에는 predictor 없음 → 자동 무시.
     """
     bn_bias_params = []
     regular_params = []

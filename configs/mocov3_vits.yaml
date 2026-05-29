@@ -1,0 +1,79 @@
+# ====================================================================
+# MoCo v3 + ViT-S/16 — STL-10 SSL pretraining (Colab L4)
+#
+# 근거: Chen et al. 2021 (MoCo v3) ViT-S 공식 설정을
+#       STL-10(100k, 96px) / L4(24GB, 72h)에 맞춰 변환.
+#
+# 평가: evaluate.py는 미리 추출한 feature(N,D)만 사용 → 해상도 무관.
+#       CIFAR-10은 extract_features에서 32→96 resize.
+# 시간: ViT-S 37 token은 가벼움. 1 epoch 측정 후 72h 역산.
+#       300ep가 안 들어가면 epochs=200 / warmup_epochs=27로 축소.
+# ====================================================================
+
+method: mocov3
+
+backbone:
+  name: vit_small                      # build_backbone가 vit* → ViTBackbone로 분기
+  timm_name: vit_small_patch16_224     # ViT-S/16 (embed_dim 384, depth 12, heads 6)
+  img_size: 96                         # 96/16=6 → 36 patch token + 1 CLS
+  global_pool: token                   # token(CLS, MoCo v3 표준) | avg(해상도 robust)
+  freeze_patch_embed: true             # ★ MoCo v3 핵심 안정화 (random patch proj 고정)
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4                       # Colab은 4 권장 (8은 DataLoader 불안정)
+  persistent_workers: true
+  download: true
+
+augmentation:
+  # two-view (type 미지정 → 기본 two_view). MoCo v3는 BYOL식 2-view aug.
+  crop_scale: [0.2, 1.0]               # cross-res(STL96→CIFAR32) 대비 넓게
+  color_jitter: [0.4, 0.4, 0.2, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p: 0.5
+
+optimizer:
+  name: adamw                          # ★ ViT는 AdamW (schedulers.py에 추가됨)
+  lr: 6.0e-4                           # = 1.5e-4 × (batch/256) = 1.5e-4 × 4 (batch 1024)
+                                       #   batch 바꾸면 반드시 재계산
+  weight_decay: 0.1                    # MoCo v3 ViT 표준 (bias/norm/pos_embed/cls는 자동 제외)
+  betas: [0.9, 0.999]
+
+schedule:
+  epochs: 300                          # ViT-S는 300ep부터 의미있는 수렴 (시간 부족 시 200)
+  warmup_epochs: 40                    # 논문 40/300 ≈ 13% (200ep면 27로)
+
+training:
+  batch_size: 1024                     # in-batch negative ≈1023. L4 24GB에 ViT-S면 여유
+  amp: true
+  amp_dtype: bfloat16                  # L4 bf16 지원 → GradScaler 불필요
+  compile: false
+  channels_last: false                 # ViT는 이점 없음 (ResNet 전용)
+  grad_clip: null                      # 불안정 spike 시 3.0 정도로 켜는 게 보험
+  seed: 42
+  log_every: 20
+  save_every: 5                        # 세션 끊김 대비 (Colab)
+  keep_last_n_ckpts: 3
+
+projection:                            # MoCo v3 projector: 3-layer MLP
+  hidden_dim: 4096
+  output_dim: 256
+  num_layers: 3
+
+predictor:                             # MoCo v3 predictor: 2-layer MLP
+  input_dim: 256                       # = projection.output_dim
+  hidden_dim: 4096
+  output_dim: 256
+
+mocov3:
+  ema_tau_base: 0.99                   # momentum m=0.99 → cosine으로 1.0까지
+  ema_schedule: cosine
+  temperature: 0.2                     # MoCo v3 τ (v2의 0.07/0.15보다 큼)
+  symmetric_loss: true
+
+output:
+  dir: ./outputs/mocov3_vits_seed42
+  log_file: ./logs/mocov3_vits_seed42.log
