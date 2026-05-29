@@ -47,8 +47,11 @@ optimizer:
   betas: [0.9, 0.999]
 
 schedule:
-  epochs: 300                          # ViT-S는 300ep부터 의미있는 수렴 (시간 부족 시 200)
-  warmup_epochs: 40                    # 논문 40/300 ≈ 13% (200ep면 27로)
+  epochs: 1000                         # STL10 100k는 ImageNet의 1/13 규모 → 긴 학습 유리.
+                                       #   batch 2048에서 1 epoch ~150s → 1000ep ≈ 42h (72h 예산 내).
+                                       #   ★ epochs는 cosine LR schedule 전체를 결정하므로 중간 변경 금지
+                                       #     (바꾸면 resume 시 lr 튐). 끝까지 한 번에 돌릴 것.
+  warmup_epochs: 130                   # 13% 비율 유지 (130/1000). lr 1.2e-3가 커서 warmup 넉넉히.
 
 training:
   batch_size: 2048                     # in-batch negative ≈2047. grad_checkpoint=true면 L4에서 ~6GB.
