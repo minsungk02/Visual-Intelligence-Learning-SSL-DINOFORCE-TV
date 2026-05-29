@@ -41,7 +41,7 @@ augmentation:
 
 optimizer:
   name: adamw                          # ★ ViT는 AdamW (schedulers.py에 추가됨)
-  lr: 6.0e-4                           # = 1.5e-4 × (batch/256) = 1.5e-4 × 4 (batch 1024)
+  lr: 1.2e-3                           # = 1.5e-4 × (batch/256) = 1.5e-4 × 8 (batch 2048)
                                        #   batch 바꾸면 반드시 재계산
   weight_decay: 0.1                    # MoCo v3 ViT 표준 (bias/norm/pos_embed/cls는 자동 제외)
   betas: [0.9, 0.999]
@@ -51,8 +51,9 @@ schedule:
   warmup_epochs: 40                    # 논문 40/300 ≈ 13% (200ep면 27로)
 
 training:
-  batch_size: 1024                     # in-batch negative ≈1023. grad_checkpoint=true로 24GB 안전.
-                                       #   그래도 OOM이면 512로 줄이고 optimizer.lr=3.0e-4로.
+  batch_size: 2048                     # in-batch negative ≈2047. grad_checkpoint=true면 L4에서 ~6GB.
+                                       #   (batch 1024 측정 3.2GB → 2048도 한참 여유. negative 2배.)
+                                       #   OOM이면 1024+lr 6.0e-4, 더 키우려면 4096+lr 2.4e-3.
   amp: true
   amp_dtype: bfloat16                  # L4 bf16 지원 → GradScaler 불필요
   compile: false
