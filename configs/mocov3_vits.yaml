@@ -18,6 +18,10 @@ backbone:
   img_size: 96                         # 96/16=6 → 36 patch token + 1 CLS
   global_pool: token                   # token(CLS, MoCo v3 표준) | avg(해상도 robust)
   freeze_patch_embed: true             # ★ MoCo v3 핵심 안정화 (random patch proj 고정)
+  gradient_checkpoint: true            # ★ L4 OOM 방어. batch 1024 symmetric을 24GB에 안전하게.
+                                       #   속도 ~20-30% 손실하지만 STL10은 epoch이 짧아 영향 작음.
+                                       #   1 epoch 시간 측정 후 여유 많으면 false로 바꿔 가속 가능.
+                                       #   feature 추출 시에는 자동 무시됨.
 
 data:
   root: ./data
@@ -47,7 +51,8 @@ schedule:
   warmup_epochs: 40                    # 논문 40/300 ≈ 13% (200ep면 27로)
 
 training:
-  batch_size: 1024                     # in-batch negative ≈1023. L4 24GB에 ViT-S면 여유
+  batch_size: 1024                     # in-batch negative ≈1023. grad_checkpoint=true로 24GB 안전.
+                                       #   그래도 OOM이면 512로 줄이고 optimizer.lr=3.0e-4로.
   amp: true
   amp_dtype: bfloat16                  # L4 bf16 지원 → GradScaler 불필요
   compile: false
@@ -55,7 +60,7 @@ training:
   grad_clip: null                      # 불안정 spike 시 3.0 정도로 켜는 게 보험
   seed: 42
   log_every: 20
-  save_every: 5                        # 세션 끊김 대비 (Colab)
+  save_every: 5                        # 세션 끊김 대비 (Colab). 1 ckpt ≈ 5 epoch 손실 상한
   keep_last_n_ckpts: 3
 
 projection:                            # MoCo v3 projector: 3-layer MLP

@@ -79,7 +79,9 @@ def load_checkpoint(
     Returns:
         다음 시작 epoch (저장된 epoch + 1).
     """
-    state = torch.load(ckpt_path, map_location="cpu")
+    # weights_only=False — ckpt에 config dict(extra)가 들어있어 PyTorch 2.6+의
+    # weights_only=True 기본값에서 로드가 막힐 수 있음. 자체 생성 체크포인트라 안전.
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     
     if "model_state_dict" in state:
         model.load_state_dict(state["model_state_dict"])

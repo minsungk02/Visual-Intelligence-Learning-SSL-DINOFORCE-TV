@@ -41,7 +41,11 @@ trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'  total      : {total/1e6:.1f}M')
 print(f'  trainable  : {trainable/1e6:.1f}M  (frozen momentum encoder + frozen patch_embed.proj 제외)')
 print(f'  feat_dim   : {model.backbone.feature_dim}')
+print(f'  grad_ckpt  : {model.backbone.grad_checkpoint}  (config gradient_checkpoint)')
 assert model.backbone.feature_dim == 384, 'ViT-S embed_dim은 384여야 함'
+# config가 gradient_checkpoint: true면 ViT block에 ckpt 적용됐는지 확인
+if cfg['backbone'].get('gradient_checkpoint', False):
+    assert model.backbone.grad_checkpoint, 'config는 grad_ckpt ON인데 backbone에 반영 안 됨'
 
 print()
 print('=' * 70)
@@ -189,6 +193,122 @@ print(f'  loss={log2["loss"]:.4f}, feat_std={log2.get("feature_std", 0.0):.4f}')
 assert torch.isfinite(loss2).item()
 loss2.backward()
 print('  MoCo v2 forward+backward OK')
+
+print()
+print('=' * 70)
+print('[9] RESUME roundtrip — Colab 24h 끊김 복구 시뮬레이션')
+print('=' * 70)
+# 시나리오: 몇 step 학습 → ckpt 저장 → fresh 모델/optimizer에 복원 →
+#           model state / optimizer state(AdamW exp_avg) / momentum encoder /
+#           start_epoch / lr_scheduler step_count 가 정확히 살아나는지.
+from ssl_lib.utils.checkpoint import load_checkpoint
+
+torch.manual_seed(7)
+# 작은 batch로 빠르게. config 그대로 쓰되 grad_ckpt는 CPU 속도 위해 OFF.
+cfg_r = yaml.safe_load(open('configs/mocov3_vits.yaml'))
+cfg_r['backbone']['gradient_checkpoint'] = False
+
+m_a = MoCoV3(cfg_r)
+opt_a = build_optimizer(m_a, cfg_r)
+STEPS_PER_EPOCH = 4
+sched_a = CosineLRScheduler(
+    optimizer=opt_a, base_lr=cfg_r['optimizer']['lr'],
+    warmup_steps=STEPS_PER_EPOCH * 2, total_steps=STEPS_PER_EPOCH * 10,
+)
+
+# 3 epoch 분량 학습 (EMA + AdamW state 생성)
+m_a.train()
+xa = torch.randn(6, 3, 96, 96)
+xb = torch.randn(6, 3, 96, 96)
+SAVED_EPOCH = 3
+for ep in range(SAVED_EPOCH):
+    for st in range(STEPS_PER_EPOCH):
+        m_a.set_ema_tau(ep + st / STEPS_PER_EPOCH, 10)
+        opt_a.zero_grad(set_to_none=True)
+        loss_a, _ = m_a(xa, xb)
+        loss_a.backward()
+        opt_a.step()
+        sched_a._compute_lr  # noqa
+        sched_a.step()
+        m_a._update_target()
+print(f'  학습 완료: epoch {SAVED_EPOCH}, sched step_count={sched_a.step_count}, '
+      f'lr={opt_a.param_groups[0]["lr"]:.3e}')
+
+# AdamW state가 실제로 쌓였는지
+n_state = sum(1 for s in opt_a.state.values() if 'exp_avg' in s)
+print(f'  AdamW exp_avg state entries: {n_state}')
+assert n_state > 0, 'optimizer state가 비어있음 (resume시 복원할 게 없음)'
+
+# 저장
+with tempfile.TemporaryDirectory() as tmp:
+    save_checkpoint(
+        model=m_a, optimizer=opt_a, epoch=SAVED_EPOCH,
+        output_dir=tmp, extra={'config': cfg_r, 'stats': {'avg_loss': 1.23}},
+    )
+    ckpt_path = Path(tmp) / f'ckpt_ep{SAVED_EPOCH}.pth'
+    assert ckpt_path.exists(), 'ckpt_ep*.pth 저장 실패'
+    print(f'  saved: {ckpt_path.name}')
+
+    # ---- fresh 환경 (= 세션 재시작) ----
+    m_b = MoCoV3(cfg_r)
+    opt_b = build_optimizer(m_b, cfg_r)
+    # 복원 전엔 weight가 다름
+    pa = next(m_a.base_encoder.parameters()).detach()
+    pb = next(m_b.base_encoder.parameters()).detach()
+    assert (pa - pb).abs().max().item() > 0, 'fresh 모델이 이미 동일 (시드 우연)'
+
+    start_epoch = load_checkpoint(m_b, str(ckpt_path), opt_b)
+    print(f'  load_checkpoint → start_epoch={start_epoch}')
+    assert start_epoch == SAVED_EPOCH + 1, f'start_epoch 틀림: {start_epoch}'
+
+    # (a) base_encoder weight 복원 일치
+    for (na, va), (nb, vb) in zip(
+        m_a.base_encoder.state_dict().items(),
+        m_b.base_encoder.state_dict().items(),
+    ):
+        assert torch.equal(va, vb), f'base_encoder 복원 불일치: {na}'
+    print('  (a) base_encoder weight 복원 일치 OK')
+
+    # (b) momentum_encoder 복원 일치 (EMA 진행 상태 보존)
+    for va, vb in zip(
+        m_a.momentum_encoder.state_dict().values(),
+        m_b.momentum_encoder.state_dict().values(),
+    ):
+        assert torch.equal(va, vb), 'momentum_encoder 복원 불일치'
+    # momentum != base (학습이 진행됐으므로 달라야 정상)
+    mb_base = next(m_b.base_encoder.parameters()).detach()
+    mb_mom = next(m_b.momentum_encoder.parameters()).detach()
+    print(f'  (b) momentum_encoder 복원 OK, base와 max_diff={ (mb_base-mb_mom).abs().max().item():.2e}')
+
+    # (c) AdamW optimizer state(exp_avg) 복원 일치
+    sd_a = opt_a.state_dict()['state']
+    sd_b = opt_b.state_dict()['state']
+    assert len(sd_a) == len(sd_b) and len(sd_b) > 0, 'optimizer state 개수 불일치'
+    key0 = list(sd_b.keys())[0]
+    assert torch.allclose(sd_a[key0]['exp_avg'], sd_b[key0]['exp_avg']), 'exp_avg 불일치'
+    assert torch.allclose(sd_a[key0]['exp_avg_sq'], sd_b[key0]['exp_avg_sq']), 'exp_avg_sq 불일치'
+    print('  (c) AdamW exp_avg / exp_avg_sq 복원 일치 OK')
+
+    # (d) lr_scheduler step_count 복원 (train_loop.pretrain과 동일 로직)
+    sched_b = CosineLRScheduler(
+        optimizer=opt_b, base_lr=cfg_r['optimizer']['lr'],
+        warmup_steps=STEPS_PER_EPOCH * 2, total_steps=STEPS_PER_EPOCH * 10,
+    )
+    sched_b.step_count = (start_epoch - 1) * STEPS_PER_EPOCH  # = SAVED_EPOCH * steps
+    restored_lr = sched_b._compute_lr(sched_b.step_count)
+    print(f'  (d) sched step_count 복원={sched_b.step_count}, lr={restored_lr:.3e} '
+          f'(저장 시점 {opt_a.param_groups[0]["lr"]:.3e})')
+    assert abs(restored_lr - opt_a.param_groups[0]['lr']) < 1e-6, 'lr 복원 불일치 (warmup 재실행 위험)'
+
+    # (e) 복원 후 한 step 더 학습되는지 (이어서 학습 가능)
+    m_b.train()
+    m_b.set_ema_tau(start_epoch, 10)
+    opt_b.zero_grad(set_to_none=True)
+    loss_b, _ = m_b(xa, xb)
+    loss_b.backward()
+    opt_b.step()
+    m_b._update_target()
+    print(f'  (e) resume 후 추가 step OK (loss={loss_b.item():.4f})')
 
 print()
 print('=' * 70)

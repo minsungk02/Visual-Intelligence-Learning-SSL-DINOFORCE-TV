@@ -144,6 +144,7 @@ def build_backbone(cfg: dict) -> nn.Module:
             img_size=bb_cfg.get("img_size", 96),
             global_pool=bb_cfg.get("global_pool", "token"),
             freeze_patch_embed=bb_cfg.get("freeze_patch_embed", True),
+            grad_checkpoint=bb_cfg.get("gradient_checkpoint", False),
         )
 
     if name.startswith("swin"):

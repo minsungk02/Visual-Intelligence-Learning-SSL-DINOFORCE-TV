@@ -17,8 +17,13 @@ config: configs/mocov3_vits.yaml
     예) 1 epoch = T초 → 300 epoch = 300·T/3600 시간.
     72h 초과 시 --epochs 200 (warmup도 config에서 27로) 으로 조정.
 """
+import os
 import sys
 from pathlib import Path
+
+# CUDA 메모리 단편화 방지 — batch 1024 ViT-S에서 OOM 여유 확보.
+# torch import 전에 설정해야 효과 있음.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
