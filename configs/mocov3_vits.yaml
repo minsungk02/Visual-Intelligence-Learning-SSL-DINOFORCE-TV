@@ -64,8 +64,9 @@ training:
   grad_clip: null                      # 불안정 spike 시 3.0 정도로 켜는 게 보험
   seed: 42
   log_every: 20
-  save_every: 5                        # 세션 끊김 대비 (Colab). 1 ckpt ≈ 5 epoch 손실 상한
-  keep_last_n_ckpts: 3
+  save_every: 20                       # Drive 휴지통 누적 완화 (Drive는 unlink가 휴지통行→용량 잠식).
+                                       #   끊김 시 최대 20ep(~52분) 손실. 누적 속도는 1/4로.
+  keep_last_n_ckpts: 2                 # 상주 ckpt 수 (resume엔 최신 1개면 충분, 안전마진 2개)
 
 projection:                            # MoCo v3 projector: 3-layer MLP
   hidden_dim: 4096
