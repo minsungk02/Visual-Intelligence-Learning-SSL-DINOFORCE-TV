@@ -43,10 +43,10 @@ optimizer:
   betas: [0.9, 0.999]
 
 schedule:
-  epochs: 300                          # ★ patch8은 연산 ~4-6배 → 1 epoch ~600-900s 예상.
-                                       #   1 epoch 측정 후 72h 역산 필수. 1000은 불가.
-                                       #   초과 시 epochs 200 (warmup 27)로.
-  warmup_epochs: 40                    # 13% 비율
+  epochs: 500                          # 1 epoch 411s 측정 → 500ep ≈ 57h (72h 내).
+                                       #   patch8 1000ep(114h)은 불가라 시간 제약 하 상한.
+                                       #   ★ cosine 전체를 결정 → 중간 변경 금지(끝까지).
+  warmup_epochs: 65                    # 13% 비율 (65/500). lr 1.2e-3가 커서 넉넉히
 
 training:
   batch_size: 2048                     # ★ patch8 메모리 ~17GB(추정). sanity에서 OOM이면
