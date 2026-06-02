@@ -1,0 +1,83 @@
+# ====================================================================
+# MoCo v3 + ViT-S/8 — STL-10 SSL pretraining (Colab L4)
+#
+# 목적: fine-grained(동물, cat↔dog) 병목 = ViT의 공간 분해능 부족 가설.
+#       patch 16→8로 token 37→145 (4배) → locality 강화.
+#       파라미터는 21.4M로 ViT-S/16(21.6M)과 사실상 동일 → 작은 데이터(100k)에
+#       과적합 위험 없이 해상도만 4배. (cf. DINO ViT-S/8)
+#
+# ★ 기존 mocov3_vits.yaml(ViT-S/16, 86.6%)은 그대로 두고 이 파일은 신규.
+#   output.dir도 별도 → 이전 체크포인트 안 덮어씀.
+# ====================================================================
+
+method: mocov3
+
+backbone:
+  name: vit_small                      # build_backbone가 vit* → ViTBackbone로 분기
+  timm_name: vit_small_patch8_224      # ★ patch 8 → 96/8=12 → 145 token (vs patch16 37)
+  img_size: 96
+  global_pool: token
+  freeze_patch_embed: true             # MoCo v3 안정화
+  gradient_checkpoint: true            # ★ 필수 (patch8 토큰 4배 → 메모리)
+
+data:
+  root: ./data
+  dataset: stl10_unlabeled
+  image_size: 96
+  num_workers: 4
+  persistent_workers: true
+  download: true
+
+augmentation:
+  crop_scale: [0.2, 1.0]
+  color_jitter: [0.4, 0.4, 0.2, 0.1]
+  color_jitter_p: 0.8
+  grayscale_p: 0.2
+  gaussian_blur_p: 0.5
+
+optimizer:
+  name: adamw
+  lr: 1.2e-3                           # = 1.5e-4 × 2048/256 (batch 2048)
+                                       #   batch 1024로 줄이면 6.0e-4로 재계산
+  weight_decay: 0.1
+  betas: [0.9, 0.999]
+
+schedule:
+  epochs: 300                          # ★ patch8은 연산 ~4-6배 → 1 epoch ~600-900s 예상.
+                                       #   1 epoch 측정 후 72h 역산 필수. 1000은 불가.
+                                       #   초과 시 epochs 200 (warmup 27)로.
+  warmup_epochs: 40                    # 13% 비율
+
+training:
+  batch_size: 2048                     # ★ patch8 메모리 ~17GB(추정). sanity에서 OOM이면
+                                       #   batch_size 1024 + optimizer.lr 6.0e-4로.
+  amp: true
+  amp_dtype: bfloat16
+  compile: false
+  channels_last: false
+  grad_clip: null                      # 불안정 spike 시 3.0
+  seed: 42
+  log_every: 20
+  save_every: 20                       # Drive 휴지통 누적 완화
+  keep_last_n_ckpts: 2
+
+projection:                            # MoCo v3 projector (input_dim은 384 자동)
+  hidden_dim: 4096
+  output_dim: 256
+  num_layers: 3
+
+predictor:
+  input_dim: 256
+  hidden_dim: 4096
+  output_dim: 256
+
+mocov3:
+  ema_tau_base: 0.99
+  ema_schedule: cosine
+  temperature: 0.2                     # 기존 유지 — patch8 "순효과"를 1변수로 확인.
+                                       #   (τ 0.1은 결과 보고 다음 레버로 추가)
+  symmetric_loss: true
+
+output:
+  dir: ./outputs/mocov3_vits8_seed42   # ← ViT-S/16(mocov3_vits_seed42)과 별도 폴더
+  log_file: ./logs/mocov3_vits8_seed42.log
