@@ -57,7 +57,7 @@ training:
   channels_last: false
   grad_clip: null                      # 불안정 spike 시 3.0
   seed: 42
-  log_every: 20
+  log_every: 16                        # 48 step/epoch의 약수 → step 16·32·48에 로그(마지막 포함)
   save_every: 20                       # Drive 휴지통 누적 완화
   keep_last_n_ckpts: 2
 
