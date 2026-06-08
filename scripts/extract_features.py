@@ -32,6 +32,16 @@ ResNet / ViT / Swin backbone 모두 지원 (build_backbone 사용).
     standardize : 차원별 z-score. train 통계로 mean/std 계산해 train+test에 적용.
                   (ViT + lr=0.1 LP에 권장)
   ※ 어떤 방식을 쓸지는 결과 보기 전에 미리 확정하고 레포에 박아둘 것.
+
+★ --feature-mode (ViT 전용, Phase A LP 레버):
+  학습된 백본은 그대로 두고 feature 읽는 법만 바꿈 (재학습 0). LP recipe는 불변이므로
+  합법. ResNet/Swin에는 무효(cls만). standardize 정규화는 추출 후 적용되므로 병행 OK.
+    cls                 : CLS token (384-d). 기존 동작과 동일 = baseline.
+    avg                 : patch token 평균 (384-d).
+    cls_patchmean       : CLS ⊕ patch mean (768-d).
+    last4_cls           : 마지막 4 block CLS concat (1536-d). DINO linear-eval 표준.
+    last4_cls_patchmean : last4_cls ⊕ 최심 block patch mean (1920-d).
+  ※ mode마다 --output-dir 를 다르게 줘서 서로 덮어쓰지 않도록 할 것.
 """
 import sys
 from pathlib import Path
@@ -113,6 +123,14 @@ def main():
     parser.add_argument('--normalize', choices=['none', 'l2', 'standardize'],
                         default='none',
                         help='feature 정규화 방식 (LP 점수 레버). 기본 none.')
+    parser.add_argument('--feature-mode',
+                        choices=['cls', 'avg', 'cls_patchmean',
+                                 'last4_cls', 'last4_cls_patchmean'],
+                        default='cls',
+                        help='ViT feature 추출 방식 (Phase A LP 레버, 추출-time 전용). '
+                             'cls=CLS 384(기존 baseline), avg=patch mean, '
+                             'cls_patchmean=768, last4_cls=DINO 1536, '
+                             'last4_cls_patchmean=1920. ResNet/Swin엔 무효.')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -124,15 +142,24 @@ def main():
             cfg = yaml.safe_load(f)
         cfg.setdefault('backbone', {})
         cfg['backbone']['gradient_checkpoint'] = False  # 추론 시 불필요 (ViT는 무시)
+        cfg['backbone']['feature_mode'] = args.feature_mode  # ★ 추출 방식 주입 (ViT만 사용)
+        is_vit = str(cfg['backbone'].get('name', '')).lower().startswith('vit')
+        if args.feature_mode != 'cls' and not is_vit:
+            print(f"[warn] --feature-mode={args.feature_mode} 는 ViT 전용. "
+                  f"backbone='{cfg['backbone'].get('name')}' → 무시되고 cls로 추출됨.")
         backbone = build_backbone(cfg)
     else:
+        if args.feature_mode != 'cls':
+            print(f"[warn] --feature-mode={args.feature_mode} 는 ViT 전용. "
+                  f"config 없는 ResNet50 기본 경로 → 무시됨.")
         backbone = ResNetBackbone(name='resnet50', small_image=True, gradient_checkpoint=False)
 
     ckpt = torch.load(args.backbone, map_location='cpu')
     backbone.load_state_dict(ckpt['backbone_state_dict'])
     backbone = backbone.to(device)
     print(f'backbone loaded  (epoch={ckpt.get("epoch", "?")}, '
-          f'feature_dim={backbone.feature_dim}, normalize={args.normalize})')
+          f'feature_mode={args.feature_mode}, feature_dim={backbone.feature_dim}, '
+          f'normalize={args.normalize})')
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

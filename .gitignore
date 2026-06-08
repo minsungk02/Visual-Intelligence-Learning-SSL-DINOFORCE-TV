@@ -23,3 +23,6 @@ venv/
 .vscode/
 *.swp
 .DS_Store
+
+# Internal handoff scratchpad (로컬 전용 — 결과는 RESULTS.md / Notion이 영구 기록)
+PHASE_A_HANDOFF.md

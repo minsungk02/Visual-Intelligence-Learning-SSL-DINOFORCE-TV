@@ -25,6 +25,25 @@
 
 (`?`는 학습 후 채워 넣을 것)
 
+## Phase A — feature 추출 LP 레버 (재학습 0, ep500 백본)
+
+ep500 MoCo v3 ViT-S/8 백본을 그대로 두고 **feature 추출 방식만** 바꿔 LP 비교.
+`evaluate.py` LP recipe 불변 (docstring이 feature 추출/차원 변경을 명시 허용).
+normalize=standardize (train 통계로만 fit), 2026-06-09 Colab 인라인 추출.
+
+| mode | dim | STL10 LP | CIFAR10 LP | 비고 |
+|---|---|---|---|---|
+| cls (baseline) | 384 | 88.75 | 86.45 | 기존과 bit-identical |
+| avg | 384 | 87.66 | 85.17 | patch mean 단독 |
+| cls_patchmean | 768 | 89.54 | 86.66 | CLS ⊕ patch mean |
+| last4_cls | 1536 | 89.12 | 87.04 | 마지막 4 block CLS (DINO 표준) |
+| **last4_cls_patchmean (채택)** | 1920 | **89.67** | 87.00 | last4_cls ⊕ 최심 patch mean |
+
+**채택 = `last4_cls_patchmean`**: STL10 1위(89.67), CIFAR10 동률 최상(87.00).
+baseline 대비 STL10 **+1.07**, CIFAR10 **+0.54** (재학습 0, forward만).
+채택 근거 = 결과 전 사전등록된 DINO linear-eval 표준 recipe (test cherry-pick 아님).
+한계: STL10 90% 목표 대비 -0.33%p → 다음 레버(해상도-128 eval / τ=0.1 재학습) 필요.
+
 ## 재현성 cross-check (seed sweep)
 
 선정된 메인 method 1개를 두 seed로 short run하여 ±1% 안에 들어오는지 확인.

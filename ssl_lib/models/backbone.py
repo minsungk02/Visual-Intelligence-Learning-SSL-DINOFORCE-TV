@@ -145,6 +145,9 @@ def build_backbone(cfg: dict) -> nn.Module:
             global_pool=bb_cfg.get("global_pool", "token"),
             freeze_patch_embed=bb_cfg.get("freeze_patch_embed", True),
             grad_checkpoint=bb_cfg.get("gradient_checkpoint", False),
+            # feature_mode: 학습 config엔 없음 → 기본 "cls"(학습 동작 불변).
+            # extract_features.py가 추출 시 --feature-mode 값을 주입한다.
+            feature_mode=bb_cfg.get("feature_mode", "cls"),
         )
 
     if name.startswith("swin"):
