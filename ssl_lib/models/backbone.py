@@ -148,6 +148,9 @@ def build_backbone(cfg: dict) -> nn.Module:
             # feature_mode: 학습 config엔 없음 → 기본 "cls"(학습 동작 불변).
             # extract_features.py가 추출 시 --feature-mode 값을 주입한다.
             feature_mode=bb_cfg.get("feature_mode", "cls"),
+            # dynamic_img_size: 학습 config엔 없음 → 기본 False(96px bit-identical).
+            # extract_features.py가 --dynamic-img-size 로 다른 해상도 추출 때만 주입한다.
+            dynamic_img_size=bb_cfg.get("dynamic_img_size", False),
         )
 
     if name.startswith("swin"):

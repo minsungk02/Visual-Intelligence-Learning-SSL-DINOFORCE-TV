@@ -119,7 +119,8 @@ def main():
     parser.add_argument('--batch-size', type=int, default=512)
     parser.add_argument('--num-workers', type=int, default=4)
     parser.add_argument('--image-size', type=int, default=96,
-                        help='추출 해상도. backbone 학습 해상도와 일치시킬 것 (default 96).')
+                        help='추출 해상도 (default 96 = 학습 해상도). 96 외 값(예: 128)을 쓰려면 '
+                             'ViT는 --dynamic-img-size 도 함께 줘야 pos_embed가 보간된다.')
     parser.add_argument('--normalize', choices=['none', 'l2', 'standardize'],
                         default='none',
                         help='feature 정규화 방식 (LP 점수 레버). 기본 none.')
@@ -131,6 +132,10 @@ def main():
                              'cls=CLS 384(기존 baseline), avg=patch mean, '
                              'cls_patchmean=768, last4_cls=DINO 1536, '
                              'last4_cls_patchmean=1920. ResNet/Swin엔 무효.')
+    parser.add_argument('--dynamic-img-size', action='store_true',
+                        help='ViT pos_embed 동적 보간 활성화 (Phase A 다음 레버: 128px 평가). '
+                             '--image-size를 학습 해상도(96)와 다르게 줄 때 필요. '
+                             '미지정 시 96px 기본 경로는 bit-identical. ResNet/Swin엔 무효.')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -143,15 +148,22 @@ def main():
         cfg.setdefault('backbone', {})
         cfg['backbone']['gradient_checkpoint'] = False  # 추론 시 불필요 (ViT는 무시)
         cfg['backbone']['feature_mode'] = args.feature_mode  # ★ 추출 방식 주입 (ViT만 사용)
+        cfg['backbone']['dynamic_img_size'] = args.dynamic_img_size  # ★ 해상도 보간 (ViT만 사용, 기본 False)
         is_vit = str(cfg['backbone'].get('name', '')).lower().startswith('vit')
         if args.feature_mode != 'cls' and not is_vit:
             print(f"[warn] --feature-mode={args.feature_mode} 는 ViT 전용. "
                   f"backbone='{cfg['backbone'].get('name')}' → 무시되고 cls로 추출됨.")
+        if args.dynamic_img_size and not is_vit:
+            print(f"[warn] --dynamic-img-size 는 ViT 전용. "
+                  f"backbone='{cfg['backbone'].get('name')}' → 무시됨.")
+        if args.dynamic_img_size and is_vit and args.image_size == 96:
+            print("[note] --dynamic-img-size 켜졌지만 --image-size=96(학습 해상도)라 보간이 없어 "
+                  "96px와 동일 결과. 해상도 레버를 쓰려면 --image-size 128 등을 함께 지정.")
         backbone = build_backbone(cfg)
     else:
-        if args.feature_mode != 'cls':
-            print(f"[warn] --feature-mode={args.feature_mode} 는 ViT 전용. "
-                  f"config 없는 ResNet50 기본 경로 → 무시됨.")
+        if args.feature_mode != 'cls' or args.dynamic_img_size:
+            print("[warn] --feature-mode / --dynamic-img-size 는 ViT 전용. "
+                  "config 없는 ResNet50 기본 경로 → 무시됨.")
         backbone = ResNetBackbone(name='resnet50', small_image=True, gradient_checkpoint=False)
 
     ckpt = torch.load(args.backbone, map_location='cpu')

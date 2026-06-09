@@ -68,6 +68,7 @@ class ViTBackbone(nn.Module):
         freeze_patch_embed: bool = True,
         grad_checkpoint: bool = False,
         feature_mode: str = "cls",
+        dynamic_img_size: bool = False,
     ):
         """
         Args:
@@ -82,6 +83,11 @@ class ViTBackbone(nn.Module):
                 "cls"(기본)는 학습 동작과 동일 — 학습 시에는 항상 cls만 쓰임.
                 나머지는 extract_features.py --feature-mode 로 추출 때만 지정.
                 {cls, avg, cls_patchmean, last4_cls, last4_cls_patchmean}.
+            dynamic_img_size: True면 timm이 pos_embed를 입력 해상도에 맞게 보간(interpolate).
+                img_size(학습=96)와 다른 해상도로 추출할 때만 필요 (Phase A 다음 레버: 128px).
+                False(기본)면 timm 기본값과 동일 → 96px 경로는 bit-identical 보존.
+                pos_embed 파라미터 자체 shape은 img_size 기준 그대로라 학습 ckpt strict 로드 OK
+                (보간은 forward 시점에만 일어남). 추출-time 전용 옵션.
         """
         super().__init__()
         try:
@@ -98,7 +104,9 @@ class ViTBackbone(nn.Module):
             img_size=img_size,
             num_classes=0,           # classifier 제거
             global_pool=global_pool, # "token" -> CLS, "avg" -> patch mean
+            dynamic_img_size=dynamic_img_size,  # ★ True면 pos_embed 보간 → 96px 외 해상도 평가 허용
         )
+        self.dynamic_img_size = dynamic_img_size
 
         # feature_mode 검증 + feature_dim 계산
         if feature_mode not in self._FEATURE_MODE_MULT:
