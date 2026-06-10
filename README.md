@@ -1,140 +1,128 @@
-# SSL Project — STL10 unlabeled SSL pretraining
+# SSL Challenge — STL10 unlabeled SSL pretraining
 
-STL10 unlabeled 100k로 SSL pretraining 후 STL10/CIFAR10 Linear Probing 성능 평가.
-주 베이스라인은 **MoCo v3 + ViT-S/16**, 비교 baseline으로 MoCo v2 (ResNet-50)도 유지.
+STL10 unlabeled 100k로 **from-scratch** SSL pretraining 후, **frozen encoder**에 대해
+STL10 / CIFAR10 Linear Probing(LP) 성능을 평가한다.
+
+## 최종 제출 (Final submission)
+
+| 단계 | 내용 |
+|---|---|
+| SSL 방법 | **MoCo v3** (momentum encoder + projector + predictor, queue 없는 in-batch symmetric InfoNCE, frozen patch embed) |
+| Backbone | **ViT-S/8** (`vit_small_patch8_224`, img 96 → 145 token), from-scratch, 21.4M |
+| 학습 | STL10 unlabeled 100k, 500 epoch, batch 2048, AdamW lr 1.2e-3, τ=0.2, bf16 |
+| LP feature | **`last6_cls_patchmean`** (마지막 6 block CLS concat ⊕ 최심 block patch mean = **2688-d**), 96px, per-dim standardize |
+| LP recipe | `evaluate.py` 고정 (SGD lr=0.1, mom=0.9, wd=0, cosine 100ep, batch 128) — **불변** |
+| **결과** | **STL10 89.74 / CIFAR10 87.77** (Top-1) |
+
+> feature 추출 모드는 **STL train 내부 validation(4k-fit/1k-val)** 으로 선택 (test 누수 없음). `scripts/sweep_select.py` 참조. 자세한 실험·근거는 `RESULTS.md`.
 
 ## 디렉토리 구조
 
 ```
-ssl_project/
-├── ssl_lib/             # 공유 라이브러리 (editable install)
-│   ├── data/            # STL10 unlabeled, two-view augmentation
-│   ├── models/          # backbone (ResNet/ViT/Swin), heads, MoCoV2, MoCoV3, ...
-│   ├── utils/           # seed, schedulers, checkpoint, logging
-│   └── train_loop.py    # 학습 루프
-├── configs/             # YAML configs
-├── notebooks/           # 디버깅 + 학습 노트북
-├── scripts/             # CLI 진입점 + bash 실행 스크립트
-├── outputs/             # 학습 산출물 (체크포인트)
-└── logs/                # 학습 로그
+.
+├── ssl_lib/                # 공유 라이브러리 (editable install)
+│   ├── data/               # STL10 unlabeled, two-view / multi-crop augmentation
+│   ├── models/             # backbone (ResNet/ViT/Swin), heads, MoCoV2/V3, BYOL, VICReg
+│   ├── utils/              # seed, schedulers, checkpoint, logging, LARS
+│   └── train_loop.py       # 학습 루프 (method dispatch)
+├── configs/                # YAML configs (mocov3_vits8 = 최종)
+├── scripts/                # CLI 진입점 (pretrain / extract_features / sweep_select ...)
+├── notebooks/              # Colab 학습·평가 노트북
+├── evaluate.py             # 고정 LP 평가기 (수정 금지)
+├── RESULTS.md              # 실험 기록 + 최종 결과 + 재현성 노트
+└── outputs/ logs/ data/ features/   # (gitignore — 산출물)
 ```
 
-## 1. 셋업 (한 번만)
+## 환경 설정 (Environment)
+
+- **Python** 3.10+
+- **GPU** CUDA GPU 권장 (개발 환경: Colab L4 24GB / A100 40GB). CPU에서도 feature 추출·평가는 동작(느림).
+- **의존성** `requirements.txt` (torch, torchvision, timm, numpy, pyyaml, tqdm, matplotlib …)
 
 ```bash
-cd ssl_project
+# 1) 가상환경(선택)
+python -m venv .venv && source .venv/bin/activate
+
+# 2) 의존성 설치
 pip install -r requirements.txt
-pip install -e .          # ssl_lib을 editable mode로 설치
+
+# 3) 내부 라이브러리 editable 설치 (ssl_lib을 import 가능하게)
+pip install -e .
 ```
 
-## 2. 디버깅 (CPU/GPU 어디서든)
-
-순서대로 실행해서 환경 검증:
-
-1. `notebooks/00_data_check.ipynb` — STL10 다운로드 + augmentation 확인
-2. `notebooks/01_backbone_test.ipynb` — backbone forward + feature dim 검증
-
-## 3. 학습 — 두 가지 방법
-
-### 방법 A: CLI 직접 실행 (단일 GPU)
+## 최종 결과 재현 (3 단계)
 
 ```bash
-# MoCo v3 + ViT-S (현재 메인 베이스라인)
-CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py
+# 1) SSL pretraining — MoCo v3 + ViT-S/8 (500 epoch)
+#    산출물: outputs/mocov3_vits8_seed42/backbone_ep500.pth
+python scripts/pretrain.py --config configs/mocov3_vits8.yaml
 
-# MoCo v2 + ResNet-50 (비교용 baseline)
-CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov2.py
+# 2) feature 추출 — 최종 모드 last6_cls_patchmean, 96px, standardize
+python scripts/extract_features.py \
+  --backbone outputs/mocov3_vits8_seed42/backbone_ep500.pth \
+  --config   configs/mocov3_vits8.yaml \
+  --output-dir features/final \
+  --feature-mode last6_cls_patchmean \
+  --normalize standardize
+
+# 3) LP 평가 — (2)가 출력하는 evaluate.py 명령 그대로 실행
+python evaluate.py \
+  --stl10-train-features features/final/stl10_train_features.npy \
+  --stl10-train-labels   features/final/stl10_train_labels.npy \
+  --stl10-test-features  features/final/stl10_test_features.npy \
+  --stl10-test-labels    features/final/stl10_test_labels.npy \
+  --cifar10-train-features features/final/cifar10_train_features.npy \
+  --cifar10-train-labels   features/final/cifar10_train_labels.npy \
+  --cifar10-test-features  features/final/cifar10_test_features.npy \
+  --cifar10-test-labels    features/final/cifar10_test_labels.npy
 ```
 
-### 방법 B: Colab L4 노트북
-
-- `notebooks/colab_train_mocov3.ipynb` (메인)
-- `notebooks/colab_train_mocov2.ipynb` (비교)
-
-진행 상황 확인:
+### (선택) feature 추출 모드 선택 재현
+test 누수 없이 추출 모드를 STL train 내부 val로 고른 과정:
 ```bash
-tail -f logs/mocov3_vits_seed42.log
-tail -f logs/mocov2_seed42.log
-nvidia-smi
+python scripts/sweep_select.py \
+  --config configs/mocov3_vits8.yaml \
+  --ckpt-ep500 outputs/mocov3_vits8_seed42/backbone_ep500.pth \
+  --final-output-dir features/sweep_winner
 ```
 
-학습 중단:
+## Colab (Pro+) 실행
+
+세션마다 `git clone` -> `pip install -e .` -> Drive 마운트 후 `data/ outputs/ logs/`를
+Drive에 심링크(체크포인트 영구 보존, 세션 끊겨도 resume). 학습 노트북:
+`notebooks/colab_train_mocov3.ipynb`. Drive 경로: `MyDrive/ssl_project/{data,outputs,logs}`.
+
+Resume:
 ```bash
-# PID는 run_*.sh 실행 시 출력됨
-kill <PID>
+python scripts/pretrain.py --config configs/mocov3_vits8.yaml \
+  --resume outputs/mocov3_vits8_seed42/ckpt_ep<N>.pth
 ```
 
-## 4. Google Colab (L4)에서 학습
-
-코드 수정 없이 Colab에서 바로 실행 가능. 수동으로 파일을 Drive에 올릴 필요 없음.
-
-### 파일 관리 원칙
-
-| 항목 | 저장 위치 | 설명 |
-|------|-----------|------|
-| 코드 | GitHub | 세션마다 `git pull`로 최신화 |
-| STL10 데이터 | Google Drive | 첫 실행 시 자동 다운로드, 이후 재사용 |
-| 체크포인트 | Google Drive | 세션 끊겨도 유지 |
-| 로그 | Google Drive | 세션 끊겨도 유지 |
-
-Drive 경로: `내 드라이브/ssl_project/{data, outputs, logs}`
-
-### 실행 순서
-
-**처음 실행:**
-1. `notebooks/colab_train_mocov3.ipynb` (또는 `colab_train_mocov2.ipynb`) 열기
-2. Cell 1 — GPU 확인 (L4 선택 필요: 런타임 → 런타임 유형 변경)
-3. Cell 2 — Google Drive 마운트
-4. Cell 3 — 레포 클론 + 패키지 설치 + Drive 심링크 연결
-5. Cell 4 — 학습 시작 (처음부터 자동 시작)
-
-**세션 재시작 후 (중간에 끊긴 경우):**
-- Cell 1~3만 다시 실행
-- Cell 4 실행 → Drive에 저장된 마지막 체크포인트에서 자동으로 이어서 시작
-
-### Colab 전용 설정
-
-- `--num-workers 2`: Colab에서 8이면 DataLoader가 불안정
-- `--save-every 5`: 5 epoch마다 저장 (세션 끊겨도 최대 ~90분 손실)
-- 로컬 서버와 달리 `CUDA_VISIBLE_DEVICES` 설정 불필요 (GPU 1개 환경)
-
----
-
-## 5. Resume
-
-학습이 중단되면:
-```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/pretrain.py \
-    --config configs/mocov2_r50.yaml \
-    --resume outputs/mocov2_r50_seed42/ckpt_ep200.pth
-```
-
-## 6. 산출물
+## 산출물 형식
 
 ```
-outputs/mocov2_r50_seed42/
-├── ckpt_ep{10,20,...,400}.pth        # 전체 학습 state (resume용)
-├── backbone_ep{10,20,...,400}.pth    # backbone 가중치만 (LP 평가용)
-└── (최근 3개만 유지, 오래된 건 자동 정리)
+outputs/mocov3_vits8_seed42/
+├── ckpt_ep{N}.pth       # 전체 state (resume용)
+└── backbone_ep{N}.pth   # backbone 가중치만 (LP feature 추출용) — 최근 N개만 유지
 ```
+LP 평가는 `backbone_ep*.pth`만 필요. `extract_features.py`가 feature `(N,D)`를 뽑아
+`evaluate.py`(고정 recipe)에 투입한다. `evaluate.py`는 이미지가 아니라 추출된 feature만 받으므로
+backbone·feature 차원·해상도는 학생이 통제한다(docstring 명시).
 
-LP 평가에는 `backbone_ep*.pth`만 있으면 됨. evaluate.py가 이 파일의 `backbone_state_dict`를 로드해서 사용.
+## 핵심 설계 결정
 
-## 주요 설계 결정
+- **MoCo v3 + ViT 선택**: 평가가 frozen **linear-probe-only**라, fine-tune 특화(MAE류)가 아닌
+  contrastive/momentum 계열이 적합. ViT frozen patch embed로 학습 안정화(Chen et al. 2021).
+- **ViT-S/8 (patch 16->8)**: cat<->dog 등 fine-grained 병목 = 공간 분해능 부족 가설.
+  token 37->145로 해상도 4배, **파라미터는 동일(21.4M)** -> 작은 데이터(100k) 과적합 위험 없이
+  locality 강화 (cf. DINO ViT-S/8). STL10 LP 86.6 -> 88.75.
+- **feature 추출 다각화 (재학습 0)**: backbone 동결, "읽는 법"만 바꿔 LP 향상.
+  최종 `last6_cls_patchmean` = depth 앙상블(마지막 6 block CLS) + locality(최심 patch mean).
+  선택은 **STL train 내부 val** 로만 -> test cherry-pick 아님.
+- **공유 라이브러리 단일 진실 소스**: backbone/data/aug 공유 -> 방법 간 공정 비교.
+- **고정 seed + 결정론적 설정**: 재현성(peer-review 2-seed) 보장.
 
-- **공유 라이브러리 + 별도 노트북**: backbone/data/aug 코드가 단일 진실 소스 → 공정 비교 보장.
-- **CUDA_VISIBLE_DEVICES로 GPU 격리**: 코드 안에서 device 인자 안 받음. 실수 방지.
-- **AMP 필수**: 24GB GPU + 두 인코더 동시 메모리 → mixed precision 없으면 batch size 반토막.
-  - MoCo v2: fp16 + GradScaler. MoCo v3 (L4): bf16, GradScaler 불필요.
-- **MoCo v2 queue 16384**: STL10 100k에 65536은 과함. 16384가 적절.
-- **MoCo v3 in-batch negative**: queue 제거, batch_size=1024로 ~1023 negatives.
-- **ViT frozen patch embed**: MoCo v3 ViT 핵심 안정화 (Chen et al. 2021).
-- **고정 seed**: 같은 batch order, 같은 augmentation 시퀀스로 재현성 + 공정 비교.
-- **checkpoint 매 epoch 저장 + 최근 N개만 유지**: 디스크 절약 + 중단 시 복구 가능.
+## Baselines (탐색 기록)
 
-## 다음 단계
-
-evaluate.py를 받으면:
-1. `forward()` 인터페이스 확인 → backbone wrapper 조정 필요시 수정
-2. 입력 해상도 확인 → augmentation crop size 조정
-3. LP 점수 확인 → 어느 모델/설정이 좋았는지 결정
+비교용으로 MoCo v2 (ResNet-50), MoCo v2 + multi-crop, BYOL, VICReg 구현을 유지한다
+(`configs/`, `ssl_lib/models/`). 최종 제출 경로는 위 MoCo v3 + ViT-S/8.
