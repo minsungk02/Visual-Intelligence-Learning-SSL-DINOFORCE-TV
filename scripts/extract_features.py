@@ -125,13 +125,15 @@ def main():
                         default='none',
                         help='feature 정규화 방식 (LP 점수 레버). 기본 none.')
     parser.add_argument('--feature-mode',
-                        choices=['cls', 'avg', 'cls_patchmean',
-                                 'last4_cls', 'last4_cls_patchmean'],
+                        choices=['cls', 'avg', 'cls_patchmean', 'cls_patchmax',
+                                 'last4_cls', 'last4_cls_patchmean',
+                                 'last4_cls_patchmean_patchmax', 'last6_cls_patchmean'],
                         default='cls',
                         help='ViT feature 추출 방식 (Phase A LP 레버, 추출-time 전용). '
-                             'cls=CLS 384(기존 baseline), avg=patch mean, '
-                             'cls_patchmean=768, last4_cls=DINO 1536, '
-                             'last4_cls_patchmean=1920. ResNet/Swin엔 무효.')
+                             'cls=384(baseline), cls_patchmean=768, cls_patchmax=768, '
+                             'last4_cls=1536(DINO), last4_cls_patchmean=1920, '
+                             'last4_cls_patchmean_patchmax=2304, last6_cls_patchmean=2688. '
+                             'ResNet/Swin엔 무효.')
     parser.add_argument('--dynamic-img-size', action='store_true',
                         help='ViT pos_embed 동적 보간 활성화 (Phase A 다음 레버: 128px 평가). '
                              '--image-size를 학습 해상도(96)와 다르게 줄 때 필요. '

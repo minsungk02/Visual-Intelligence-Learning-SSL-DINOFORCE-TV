@@ -56,8 +56,11 @@ class ViTBackbone(nn.Module):
         "cls": 1,
         "avg": 1,
         "cls_patchmean": 2,
+        "cls_patchmax": 2,
         "last4_cls": 4,
         "last4_cls_patchmean": 5,
+        "last4_cls_patchmean_patchmax": 6,
+        "last6_cls_patchmean": 7,
     }
 
     def __init__(
@@ -165,22 +168,34 @@ class ViTBackbone(nn.Module):
         if mode == "cls":
             return self.net(x)
 
-        # avg / cls_patchmean: forward_features는 이미 self.norm 적용된 token 반환
-        if mode in ("avg", "cls_patchmean"):
+        # forward_features 기반 (이미 self.norm 적용된 token 반환): avg / cls_patchmean / cls_patchmax
+        if mode in ("avg", "cls_patchmean", "cls_patchmax"):
             tokens = self.net.forward_features(x)              # (B, 1+P, D)
-            patch_mean = tokens[:, self.num_prefix:].mean(dim=1)
+            cls = tokens[:, 0]
+            patch = tokens[:, self.num_prefix:]               # (B, P, D)
             if mode == "avg":
-                return patch_mean
-            return torch.cat([tokens[:, 0], patch_mean], dim=-1)  # (B, 2D)
+                return patch.mean(dim=1)
+            if mode == "cls_patchmean":
+                return torch.cat([cls, patch.mean(dim=1)], dim=-1)        # (B, 2D)
+            # cls_patchmax: 국소 최대 활성(귀·주둥이 등 fine-grained 단서에 민감)
+            return torch.cat([cls, patch.max(dim=1).values], dim=-1)      # (B, 2D)
 
-        # last4_cls / last4_cls_patchmean: 마지막 4 block CLS concat (DINO 표준)
-        if mode in ("last4_cls", "last4_cls_patchmean"):
-            toks = self._intermediate_tokens(x, n=4)
-            cls_cat = torch.cat([t[:, 0] for t in toks], dim=-1)  # (B, 4D)
+        # 마지막 n block CLS concat (DINO 표준) 기반:
+        #   last4_cls / last4_cls_patchmean / last4_cls_patchmean_patchmax / last6_cls_patchmean
+        if mode in ("last4_cls", "last4_cls_patchmean",
+                    "last4_cls_patchmean_patchmax", "last6_cls_patchmean"):
+            n = 6 if mode == "last6_cls_patchmean" else 4
+            toks = self._intermediate_tokens(x, n=n)
+            cls_cat = torch.cat([t[:, 0] for t in toks], dim=-1)          # (B, nD)
             if mode == "last4_cls":
                 return cls_cat
-            # 최심 block(toks[-1])의 patch mean 결합
-            patch_mean = toks[-1][:, self.num_prefix:].mean(dim=1)
-            return torch.cat([cls_cat, patch_mean], dim=-1)       # (B, 5D)
+            deepest_patch = toks[-1][:, self.num_prefix:]                 # 최심 block patch tokens
+            if mode in ("last4_cls_patchmean", "last6_cls_patchmean"):
+                return torch.cat([cls_cat, deepest_patch.mean(dim=1)], dim=-1)   # (B, (n+1)D)
+            # last4_cls_patchmean_patchmax: depth 앙상블 + mean(전체) + max(국소) 상보 결합
+            return torch.cat(
+                [cls_cat, deepest_patch.mean(dim=1), deepest_patch.max(dim=1).values],
+                dim=-1,
+            )                                                             # (B, 6D)
 
         raise ValueError(f"Unknown feature_mode: {mode!r}")
