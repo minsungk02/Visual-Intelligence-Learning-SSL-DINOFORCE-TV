@@ -36,7 +36,7 @@ STL10 / CIFAR10 Linear Probing(LP) 성능을 평가한다.
 ## 환경 설정 (Environment)
 
 - **Python** 3.10+
-- **GPU** CUDA GPU 권장 (개발 환경: Colab L4 24GB / A100 40GB). CPU에서도 feature 추출·평가는 동작(느림).
+- **GPU** CUDA GPU 권장 (개발 환경: Colab L4 24GB / 서버용 RTX 5080).
 - **의존성** `requirements.txt` (torch, torchvision, timm, numpy, pyyaml, tqdm, matplotlib …)
 
 ```bash
