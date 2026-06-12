@@ -6,8 +6,9 @@ MoCo v3 (ViT-S/16) 학습 스크립트 (GPU 0 전용).
     CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py --epochs 3     # sanity check
     CUDA_VISIBLE_DEVICES=0 python scripts/train_mocov3.py --resume outputs/mocov3_vits_seed42/ckpt_ep200.pth
 
-Colab(L4) 실행:
-    notebooks/colab_train_mocov3.ipynb
+Jupyter 서버 실행 (장시간 학습은 Terminal + nohup 권장):
+    nohup python -u scripts/train_mocov3.py > logs/train_mocov3.out 2>&1 &
+    노트북: notebooks/server_train_mocov3.ipynb
 
 config: configs/mocov3_vits.yaml
 체크포인트: outputs/mocov3_vits_seed42/
@@ -45,9 +46,9 @@ def main():
                         help='Batch size override (OOM 시 512로 줄임). '
                              '※ 바꾸면 lr도 1.5e-4×batch/256으로 재계산 필요.')
     parser.add_argument('--num-workers', type=int, default=None,
-                        help='DataLoader worker 수 override (Colab 등에서 2 권장)')
+                        help='DataLoader worker 수 override (미지정 시 config 값 — 서버는 config 값 권장)')
     parser.add_argument('--save-every', type=int, default=None,
-                        help='checkpoint 저장 주기 override (Colab 등에서 5 권장)')
+                        help='checkpoint 저장 주기 override (미지정 시 config 값)')
     args = parser.parse_args()
 
     assert torch.cuda.is_available(), 'GPU 사용 불가! CUDA 환경을 확인하세요.'

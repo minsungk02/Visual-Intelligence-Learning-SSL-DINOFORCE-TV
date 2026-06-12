@@ -22,7 +22,7 @@
 
 | 항목 | 값 |
 |---|---|
-| GPU | L4 24GB (Colab Pro+); A100도 호환 |
+| GPU | 학습 당시: L4 24GB (Colab Pro+) / 재현 환경: **RTX A5000 24GB Jupyter 서버** (24GB+ CUDA GPU 호환) |
 | AMP | bfloat16 (GradScaler 없음) |
 | Determinism | cudnn.deterministic, benchmark=False, seed=42 |
 

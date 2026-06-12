@@ -1,5 +1,5 @@
 # ====================================================================
-# MoCo v3 + ViT-S/8 — STL-10 SSL pretraining (Colab L4)
+# MoCo v3 + ViT-S/8 — STL-10 SSL pretraining (Jupyter 서버: NVIDIA RTX A5000 24GB)
 #
 # 목적: fine-grained(동물, cat↔dog) 병목 = ViT의 공간 분해능 부족 가설.
 #       patch 16→8로 token 37→145 (4배) → locality 강화.
@@ -24,7 +24,8 @@ data:
   root: ./data
   dataset: stl10_unlabeled
   image_size: 96
-  num_workers: 4
+  num_workers: 4              # ★ 기록된 결과(89.74/87.77)의 설정 — worker 수는 per-worker
+                              #   augmentation RNG 스트림을 바꾸므로 재현 시 변경 금지
   persistent_workers: true
   download: true
 
@@ -49,8 +50,8 @@ schedule:
   warmup_epochs: 65                    # 13% 비율 (65/500). lr 1.2e-3가 커서 넉넉히
 
 training:
-  batch_size: 2048                     # ★ patch8 메모리 ~17GB(추정). sanity에서 OOM이면
-                                       #   batch_size 1024 + optimizer.lr 6.0e-4로.
+  batch_size: 2048                     # ★ patch8 메모리 ~17GB → A5000 24GB에 안전.
+                                       #   16GB GPU에서 재실행 시: 1024 + optimizer.lr 6.0e-4
   amp: true
   amp_dtype: bfloat16
   compile: false
@@ -58,7 +59,7 @@ training:
   grad_clip: null                      # 불안정 spike 시 3.0
   seed: 42
   log_every: 16                        # 48 step/epoch의 약수 → step 16·32·48에 로그(마지막 포함)
-  save_every: 20                       # Drive 휴지통 누적 완화
+  save_every: 20                       # 서버 디스크 절약 (keep_last_n과 함께 회전)
   keep_last_n_ckpts: 2
 
 projection:                            # MoCo v3 projector (input_dim은 384 자동)

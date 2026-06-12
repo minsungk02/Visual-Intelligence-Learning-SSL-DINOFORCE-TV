@@ -17,7 +17,7 @@ data:
   root: ./data
   dataset: stl10_unlabeled
   image_size: 96               # ssl_lib/data/transforms.py와의 호환 키
-  num_workers: 4               # Colab L4: 4 권장 (8은 hang 위험)
+  num_workers: 4               # 기록된 결과의 설정 (서버 CPU 여유 시 8 가능하나 RNG 경로 변경됨)
   persistent_workers: true
   download: true
 
@@ -58,7 +58,7 @@ training:
   grad_clip: null
   seed: 42
   log_every: 50
-  save_every: 5                # Colab 끊김 대비 (≤ 30분 손실)
+  save_every: 5                # 프로세스 중단 대비 (≤ 30분 손실)
   keep_last_n_ckpts: 3
 
 projection:

@@ -35,9 +35,9 @@ def main():
     parser.add_argument('--batch-size', type=int, default=None,
                         help='Batch size override (OOM 시 256으로 줄임)')
     parser.add_argument('--num-workers', type=int, default=None,
-                        help='DataLoader worker 수 override (Colab 등에서 2 권장)')
+                        help='DataLoader worker 수 override (미지정 시 config 값 — 서버는 config 값 권장)')
     parser.add_argument('--save-every', type=int, default=None,
-                        help='checkpoint 저장 주기 override (Colab 등에서 5 권장)')
+                        help='checkpoint 저장 주기 override (미지정 시 config 값)')
     args = parser.parse_args()
 
     assert torch.cuda.is_available(), 'GPU 사용 불가! CUDA 환경을 확인하세요.'

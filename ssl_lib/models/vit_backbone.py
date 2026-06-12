@@ -27,7 +27,7 @@ Vision Transformer backbone (timm 기반) — MoCo v3 ViT 전용.
   재현성(2-seed 채점)에도 직접적으로 유리 — 불안정한 spike 제거.
   → state_dict에는 그대로 저장되므로 추출 시 동일한 projection 복원됨.
 
-★ gradient checkpointing (Colab L4 OOM 방어):
+★ gradient checkpointing (24GB급 GPU OOM 방어 — A5000 기준 batch 2048 ~17GB):
   transformer block의 activation을 backward 시 재계산해 메모리를 크게 절약.
   ViT-S/16 @96px symmetric MoCo v3 batch 1024는 단일 L4 24GB에서 빡빡한데,
   grad_checkpoint=True면 activation peak이 depth(12)배 가까이 줄어 여유 확보.
@@ -81,7 +81,7 @@ class ViTBackbone(nn.Module):
             freeze_patch_embed: True면 patch_embed.proj를 random init 그대로 고정.
                 MoCo v3 ViT 학습 안정화의 핵심. 강력 권장.
             grad_checkpoint: True면 transformer block에 gradient checkpointing 적용.
-                Colab L4에서 batch 1024 OOM 방어용. 추론(LP 추출) 시에는 무시됨.
+                24GB급 GPU(A5000 등)에서 대배치 OOM 방어용. 추론(LP 추출) 시에는 무시됨.
             feature_mode: feature 추출 방식 (Phase A LP 레버, 추출-time 전용).
                 "cls"(기본)는 학습 동작과 동일 — 학습 시에는 항상 cls만 쓰임.
                 나머지는 extract_features.py --feature-mode 로 추출 때만 지정.

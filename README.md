@@ -27,33 +27,57 @@ STL10 / CIFAR10 Linear Probing(LP) 성능을 평가한다.
 │   └── train_loop.py       # 학습 루프 (method dispatch)
 ├── configs/                # YAML configs (mocov3_vits8 = 최종)
 ├── scripts/                # CLI 진입점 (pretrain / extract_features / sweep_select ...)
-├── notebooks/              # Colab 학습·평가 노트북
+├── notebooks/              # Jupyter 서버용 노트북 (server_*: 학습·추출·평가·분석)
 ├── evaluate.py             # 고정 LP 평가기 (수정 금지)
 ├── RESULTS.md              # 실험 기록 + 최종 결과 + 재현성 노트
-└── outputs/ logs/ data/ features/   # (gitignore — 산출물)
+└── data/ outputs/ logs/ features/   # 실행 시 레포 루트에 자동 생성 (gitignore — 산출물)
 ```
 
-## 환경 설정 (Environment)
+모든 경로는 레포 루트 기준 상대경로(`./data`, `./outputs`, `./logs`)다. 서버 디스크는 영구적이므로
+Colab과 달리 **Drive 마운트·심링크가 전혀 필요 없고**, STL-10(~2.6GB)은 첫 실행 시 `./data`에
+자동 다운로드되며 체크포인트·로그·feature는 레포 루트 하위에 그대로 보존된다.
+
+## 환경 설정 (Environment) — Jupyter 서버
 
 - **Python** 3.10+
-- **GPU** CUDA GPU 권장 (개발 환경: Colab L4 24GB / 서버용 RTX 5080).
+- **GPU** **NVIDIA RTX A5000 24GB** (Ampere, bf16 지원 — 기준 환경. 24GB+ CUDA GPU 호환)
 - **의존성** `requirements.txt` (torch, torchvision, timm, numpy, pyyaml, tqdm, matplotlib …)
 
+JupyterLab **Terminal** 에서 최초 1회:
+
 ```bash
-# 1) 가상환경(선택)
+# 1) 클론 (jupyter 서버용 브랜치)
+git clone -b final-jupyter https://github.com/minsungk02/Visual-Intelligence-Learning-SSL-DINOFORCE-TV.git
+cd Visual-Intelligence-Learning-SSL-DINOFORCE-TV
+
+# 2) 가상환경
 python -m venv .venv && source .venv/bin/activate
 
-# 2) 의존성 설치
+# 3) 의존성 설치
 pip install -r requirements.txt
 
-# 3) 내부 라이브러리 editable 설치 (ssl_lib을 import 가능하게)
+# 4) 내부 라이브러리 editable 설치 (ssl_lib을 import 가능하게)
 pip install -e .
+
+# 5) 노트북에서 이 venv를 쓰려면 커널 등록 (notebooks/server_*.ipynb 용)
+python -m ipykernel install --user --name ssl --display-name "Python (ssl)"
 ```
+
+### A5000 기준 학습 설정 (`configs/mocov3_vits8.yaml`)
+
+- **`training.batch_size: 2048` / `optimizer.lr: 1.2e-3` — config 기본값 그대로** 사용한다.
+  batch 2048의 VRAM 사용량은 ~17GB로 A5000 24GB에 안전하게 들어간다 (gradient checkpointing 활성 기준).
+- `data.num_workers: 4` 도 기본값 유지 — worker 수는 per-worker augmentation RNG 스트림에 영향을
+  주므로, 기록된 결과(89.74/87.77)의 결정론 경로를 보존하려면 바꾸지 않는다.
+- batch를 바꾸면 **lr을 반드시 함께** 재계산한다: lr = 1.5e-4 × batch/256 (예: 16GB GPU에서
+  재실행해야 한다면 batch 1024 + lr 6.0e-4). cosine schedule은 시작 시 전체가 고정되므로
+  **학습 도중 epoch/batch 변경 금지**.
 
 ## 최종 결과 재현 (3 단계)
 
 ```bash
 # 1) SSL pretraining — MoCo v3 + ViT-S/8 (500 epoch)
+#    A5000(24GB): config 무수정 그대로 (batch 2048 / lr 1.2e-3)
 #    산출물: outputs/mocov3_vits8_seed42/backbone_ep500.pth
 python scripts/pretrain.py --config configs/mocov3_vits8.yaml
 
@@ -86,17 +110,48 @@ python scripts/sweep_select.py \
   --final-output-dir features/sweep_winner
 ```
 
-## Colab (Pro+) 실행
+## Jupyter 서버 실행 (학습)
 
-세션마다 `git clone` -> `pip install -e .` -> Drive 마운트 후 `data/ outputs/ logs/`를
-Drive에 심링크(체크포인트 영구 보존, 세션 끊겨도 resume). 학습 노트북:
-`notebooks/colab_train_mocov3.ipynb`. Drive 경로: `MyDrive/ssl_project/{data,outputs,logs}`.
+500 epoch 학습은 수십 시간이 걸리므로 **노트북 셀이 아니라 JupyterLab Terminal에서
+`nohup`(또는 `tmux`)으로 실행**한다. Jupyter 커널은 브라우저가 끊겨도 살아 있지만
+셀 출력 스트림이 유실되고 커널 재시작 한 번에 학습이 중단된다. `nohup`이면 브라우저/SSH와
+무관하게 진행되고 로그가 파일로 영구히 남는다.
 
-Resume:
 ```bash
-python scripts/pretrain.py --config configs/mocov3_vits8.yaml \
-  --resume outputs/mocov3_vits8_seed42/ckpt_ep<N>.pth
+cd Visual-Intelligence-Learning-SSL-DINOFORCE-TV
+source .venv/bin/activate
+mkdir -p logs
+
+# 백그라운드 학습 시작
+nohup python -u scripts/pretrain.py --config configs/mocov3_vits8.yaml \
+  > logs/pretrain_mocov3_vits8.out 2>&1 &
+
+# 진행 모니터링
+tail -f logs/pretrain_mocov3_vits8.out   # 실시간 로그
+nvidia-smi                               # GPU 사용률 / VRAM
 ```
+
+서버 재부팅·프로세스 중단 시 resume (체크포인트는 `outputs/`에 영구 보존):
+```bash
+nohup python -u scripts/pretrain.py --config configs/mocov3_vits8.yaml \
+  --resume outputs/mocov3_vits8_seed42/ckpt_ep<N>.pth \
+  > logs/pretrain_resume.out 2>&1 &
+```
+
+노트북으로 작업하려면 `notebooks/server_*.ipynb` 를 사용한다 (커널: `Python (ssl)`):
+
+| 노트북 | 용도 |
+|---|---|
+| `server_train_universal.ipynb` | **메인** — CONFIG 한 줄로 모든 method 학습 + 추출 + LP 평가 + 시각화 |
+| `server_train_mocov3.ipynb` / `server_train_mocov2.ipynb` | 단일 method 학습 (자동 resume) |
+| `server_evaluate.ipynb` | feature 추출 + evaluate.py LP 평가 |
+| `server_analyze_training.ipynb` | 학습 로그 파싱·시각화 (loss / feat_std / lr) |
+
+feature 추출(2단계)과 LP 평가(3단계)는 수 분 내로 끝나므로 Terminal이나 노트북 셀
+어느 쪽에서 실행해도 무방하다. 단, **500 epoch 본학습만큼은 Terminal + nohup을 권장**한다.
+
+> 이 브랜치(`final-jupyter`)는 Jupyter 서버 전용이다. 레거시 Colab 노트북(Drive
+> 마운트·심링크 워크플로)은 `main` 브랜치의 `notebooks/colab_*.ipynb` 에 보존되어 있다.
 
 ## 산출물 형식
 

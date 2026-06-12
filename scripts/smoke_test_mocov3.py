@@ -196,7 +196,7 @@ print('  MoCo v2 forward+backward OK')
 
 print()
 print('=' * 70)
-print('[9] RESUME roundtrip — Colab 24h 끊김 복구 시뮬레이션')
+print('[9] RESUME roundtrip — 서버 프로세스 중단/재시작 복구 시뮬레이션')
 print('=' * 70)
 # 시나리오: 몇 step 학습 → ckpt 저장 → fresh 모델/optimizer에 복원 →
 #           model state / optimizer state(AdamW exp_avg) / momentum encoder /

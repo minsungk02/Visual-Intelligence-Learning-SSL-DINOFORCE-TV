@@ -1,5 +1,5 @@
 # ====================================================================
-# MoCo v3 + ViT-S/16 — STL-10 SSL pretraining (Colab L4)
+# MoCo v3 + ViT-S/16 — STL-10 SSL pretraining (Jupyter 서버: NVIDIA RTX A5000 24GB)
 #
 # 근거: Chen et al. 2021 (MoCo v3) ViT-S 공식 설정을
 #       STL-10(100k, 96px) / L4(24GB, 72h)에 맞춰 변환.
@@ -27,7 +27,7 @@ data:
   root: ./data
   dataset: stl10_unlabeled
   image_size: 96
-  num_workers: 4                       # Colab은 4 권장 (8은 DataLoader 불안정)
+  num_workers: 4                       # 기록된 결과의 설정 (서버 CPU 여유 시 8 가능하나 RNG 경로 변경됨)
   persistent_workers: true
   download: true
 

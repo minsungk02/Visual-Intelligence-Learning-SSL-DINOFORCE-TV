@@ -15,8 +15,8 @@ normalize 누수 방지:
   standardize는 항상 "fit 셋 통계"로만 mean/std를 구해 fit+eval에 적용.
   (val 단계: fit=train4k 통계 → val 적용 / 최종: fit=full train 통계 → test 적용)
 
-사용 예 (Colab):
-  !python scripts/sweep_select.py \
+사용 예 (서버 Terminal):
+  python scripts/sweep_select.py \
     --config configs/mocov3_vits8.yaml \
     --ckpt-ep500 outputs/mocov3_vits8_seed42/backbone_ep500.pth \
     --ckpt-ep480 outputs/mocov3_vits8_seed42/backbone_ep480.pth \

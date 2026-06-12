@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib
-matplotlib.use("Agg")  # 파일 저장 백엔드 (Colab에서도 png 저장 후 display로 보면 됨)
+matplotlib.use("Agg")  # 파일 저장 백엔드 (headless 서버용 — png 저장 후 노트북에서 display)
 import matplotlib.pyplot as plt
 
 # torchvision STL10 / CIFAR10 클래스 순서 (라벨 인덱스 = 이 순서)
